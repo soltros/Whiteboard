@@ -651,6 +651,12 @@ body {
   font-weight: 600;
 }
 
+.modal-content p {
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: var(--spacing-lg);
+}
+
 .form-group {
   margin-bottom: var(--spacing-lg);
 }
@@ -759,13 +765,15 @@ body {
 
 .share-link-container {
   display: flex;
-  gap: var(--spacing-md);
-  align-items: center;
+  gap: var(--spacing-sm);
+  align-items: stretch;
   margin-bottom: var(--spacing-lg);
 }
 
 .share-link-input {
   flex: 1;
+  min-width: 200px;
+  width: 100%;
   padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid rgba(65, 105, 225, 0.3);
   border-radius: 4px;
@@ -782,12 +790,20 @@ body {
   box-shadow: 0 0 0 3px rgba(65, 105, 225, 0.1);
 }
 
-.share-link-container button {
-  display: flex;
+.share-link-container .btn-primary {
+  display: inline-flex !important;
   align-items: center;
-  gap: var(--spacing-xs);
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px !important;
   white-space: nowrap;
   flex-shrink: 0;
+  min-width: auto !important;
+  max-width: 80px !important;
+  font-size: 12px !important;
+  height: 32px !important;
+  line-height: 1;
+  font-weight: 500;
 }
 
 .share-copy-feedback {
@@ -860,22 +876,260 @@ body {
   border-left: 3px solid var(--danger);
 }
 
-/* Responsive */
+/* Mobile Menu Button */
+.mobile-menu-btn {
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 100;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition);
+}
+
+.mobile-menu-btn:hover {
+  background: var(--primary-hover);
+  transform: scale(1.05);
+}
+
+.mobile-menu-btn:active {
+  transform: scale(0.95);
+}
+
+.mobile-menu-btn svg {
+  display: block;
+}
+
+/* Sidebar Overlay for Mobile */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 500;
+  backdrop-filter: blur(2px);
+}
+
+.sidebar-overlay.active {
+  display: block;
+}
+
+/* Responsive Breakpoints */
+@media (max-width: 1024px) {
+  .ql-editor {
+    padding: var(--spacing-xl) 10%;
+  }
+}
+
 @media (max-width: 768px) {
+  /* Hide sidebar by default on mobile */
   .sidebar {
-    width: 240px;
+    position: fixed;
+    left: -280px;
+    top: 0;
+    height: 100vh;
+    z-index: 600;
+    transition: left 0.3s ease-in-out;
+    box-shadow: var(--shadow-lg);
+    width: 280px;
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border-medium);
   }
 
+  .sidebar.mobile-open {
+    left: 0;
+  }
+
+  /* Show mobile menu button */
+  .mobile-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Main content takes full width */
+  .main-content {
+    width: 100%;
+  }
+
+  /* Adjust header for mobile menu button */
   .header {
-    padding: var(--spacing-md);
+    padding: var(--spacing-md) var(--spacing-md) var(--spacing-md) 56px;
+    flex-wrap: wrap;
+    position: relative;
+    z-index: 10;
   }
 
   .title-input {
     font-size: 16px;
+    min-width: 0;
+  }
+
+  .user-info {
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+  }
+
+  .username {
+    font-size: 12px;
+    padding: 4px 8px;
+  }
+
+  .btn-admin,
+  .btn-logout-small {
+    font-size: 11px;
+    padding: 4px 8px;
+  }
+
+  /* Adjust editor padding for mobile */
+  .ql-editor {
+    padding: var(--spacing-lg) var(--spacing-md);
+  }
+
+  /* Toolbar adjustments */
+  .ql-toolbar {
+    padding: var(--spacing-xs) var(--spacing-sm) !important;
+  }
+
+  .ql-toolbar button {
+    width: 24px;
+    height: 24px;
+  }
+
+  /* Footer adjustments */
+  .footer {
+    padding: var(--spacing-xs) var(--spacing-md);
+    font-size: 11px;
+  }
+
+  /* Modal adjustments */
+  .modal-content {
+    width: 95%;
+    padding: var(--spacing-lg);
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  .modal-content h3 {
+    font-size: 16px;
+  }
+
+  /* User panel adjustments */
+  .user-panel {
+    right: var(--spacing-sm);
+    left: var(--spacing-sm);
+    width: auto;
+    min-width: auto;
+  }
+
+  /* Context menu adjustments */
+  .context-menu {
+    min-width: 180px;
+  }
+
+  /* File items more compact */
+  .file-item {
+    padding: var(--spacing-sm) var(--spacing-md);
+  }
+
+  /* Search input more compact */
+  .search-input {
+    font-size: 14px;
+  }
+
+  /* Action buttons */
+  .action-buttons {
+    margin-top: var(--spacing-sm);
+  }
+
+  .btn-primary,
+  .btn-secondary {
+    padding: var(--spacing-sm);
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Extra small devices */
+  .header {
+    padding: var(--spacing-sm) var(--spacing-sm) var(--spacing-sm) 52px;
+    min-height: 52px;
+  }
+
+  .title-input {
+    font-size: 15px;
   }
 
   .ql-editor {
-    padding: var(--spacing-lg) var(--spacing-xl);
+    padding: var(--spacing-md);
+    font-size: 14px;
+  }
+
+  .footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-sm);
+  }
+
+  .footer-left {
+    gap: var(--spacing-sm);
+  }
+
+  .modal-content {
+    padding: var(--spacing-md);
+  }
+
+  .modal-actions {
+    flex-direction: column;
+    gap: var(--spacing-sm);
+  }
+
+  .modal-actions button {
+    width: 100%;
+  }
+
+  .share-link-container {
+    flex-direction: column;
+  }
+
+  .share-link-container button {
+    width: 100%;
+  }
+
+  /* File tree more compact */
+  .file-item {
+    padding: var(--spacing-sm);
+  }
+
+  .file-summary {
+    font-size: 10px;
+  }
+}
+
+/* Landscape orientation on mobile */
+@media (max-height: 600px) and (orientation: landscape) {
+  .header {
+    min-height: 48px;
+    padding: var(--spacing-sm) var(--spacing-md);
+  }
+
+  .footer {
+    min-height: 28px;
+    padding: var(--spacing-xs) var(--spacing-md);
+  }
+
+  .ql-toolbar {
+    padding: var(--spacing-xs) !important;
   }
 }
 
@@ -884,4 +1138,26 @@ button:focus-visible,
 input:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+/* Print styles */
+@media print {
+  .sidebar,
+  .header,
+  .footer,
+  .ql-toolbar,
+  .mobile-menu-btn,
+  .context-menu,
+  .user-panel {
+    display: none !important;
+  }
+
+  .main-content {
+    width: 100%;
+  }
+
+  .ql-editor {
+    padding: 0;
+    max-width: 100%;
+  }
 }

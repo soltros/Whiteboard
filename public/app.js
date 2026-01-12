@@ -15,6 +15,21 @@ let privacyMode = false;
 // Context menu state
 let contextMenuTarget = null;
 
+// Global fetch wrapper to handle session expiration
+const originalFetch = window.fetch;
+window.fetch = async function(...args) {
+  const response = await originalFetch(...args);
+
+  // If we get a 401 Unauthorized, the session has expired
+  if (response.status === 401) {
+    console.log('Session expired, redirecting to login...');
+    window.location.href = '/login.html';
+    return response;
+  }
+
+  return response;
+};
+
 // Check authentication
 async function checkAuth() {
   try {
@@ -90,15 +105,20 @@ function initEditor() {
   quill = new Quill('#editor', {
     theme: 'snow',
     modules: {
-      toolbar: [
-        [{ 'header': [1, 2, 3, false] }],
-        ['bold', 'italic', 'underline', 'strike'],
-        ['blockquote', 'code-block'],
-        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-        [{ 'indent': '-1'}, { 'indent': '+1' }],
-        ['link', 'image'],
-        ['clean']
-      ]
+      toolbar: {
+        container: [
+          [{ 'header': [1, 2, 3, false] }],
+          ['bold', 'italic', 'underline', 'strike'],
+          ['blockquote', 'code-block'],
+          [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+          [{ 'indent': '-1'}, { 'indent': '+1' }],
+          ['link', 'image'],
+          ['clean']
+        ],
+        handlers: {
+          image: imageHandler
+        }
+      }
     },
     placeholder: 'Start writing...'
   });
@@ -113,6 +133,59 @@ function initEditor() {
     }, 1000);
     updateWordCount();
   });
+}
+
+// Custom image handler for Quill
+function imageHandler() {
+  if (!currentFilePath) {
+    updateStatus('Please save the note first before adding images');
+    return;
+  }
+
+  const input = document.createElement('input');
+  input.setAttribute('type', 'file');
+  input.setAttribute('accept', 'image/jpeg,image/jpg,image/png,image/gif,image/webp,image/svg+xml');
+  input.click();
+
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+
+    // Validate file size (10MB max)
+    if (file.size > 10 * 1024 * 1024) {
+      await showAlert('File Too Large', 'Image must be smaller than 10MB');
+      return;
+    }
+
+    // Show uploading status
+    updateStatus('Uploading image...');
+
+    const formData = new FormData();
+    formData.append('image', file);
+
+    try {
+      const response = await fetch(`/api/notes/${currentFilePath}/upload`, {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        // Insert the image into the editor
+        const range = quill.getSelection(true);
+        quill.insertEmbed(range.index, 'image', data.url);
+        quill.setSelection(range.index + 1);
+        updateStatus('Image uploaded');
+      } else {
+        await showAlert('Upload Failed', data.error || 'Failed to upload image');
+        updateStatus('Error uploading image');
+      }
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      await showAlert('Upload Failed', 'Failed to upload image');
+      updateStatus('Error uploading image');
+    }
+  };
 }
 
 // Initialize Turndown for HTML to Markdown conversion
@@ -264,7 +337,7 @@ async function openFile(filePath) {
 
       // Check password if protected
       if (currentFile.isPasswordProtected) {
-        const password = prompt('This note is password protected. Enter password:');
+        const password = await showPrompt('Password Required', 'This note is password protected. Enter password:');
 
         if (!password) {
           updateStatus('Note not opened - password required');
@@ -279,7 +352,7 @@ async function openFile(filePath) {
 
         const verifyData = await verifyResponse.json();
         if (!verifyData.valid) {
-          alert('Invalid password');
+          await showAlert('Invalid Password', 'The password you entered is incorrect.');
           updateStatus('Incorrect password');
           return;
         }
@@ -292,11 +365,13 @@ async function openFile(filePath) {
       updateStatus('File loaded');
       updateWordCount();
 
+      // Close mobile sidebar when file is opened
+      closeMobileSidebar();
+
       // Highlight current file in tree
       document.querySelectorAll('.file-item').forEach(item => {
         item.classList.remove('active');
       });
-      event.currentTarget.classList.add('active');
     }
   } catch (error) {
     console.error('Error opening file:', error);
@@ -336,7 +411,7 @@ async function saveCurrentFile() {
 
 // Create new file
 async function createNewFile() {
-  const name = prompt('Enter file name:', 'Untitled');
+  const name = await showPrompt('Create New Note', 'Enter note name:', 'Untitled');
   if (!name) return;
 
   try {
@@ -359,7 +434,7 @@ async function createNewFile() {
 
 // Create new folder
 async function createNewFolder() {
-  const name = prompt('Enter folder name:');
+  const name = await showPrompt('Create New Folder', 'Enter folder name:');
   if (!name) return;
 
   try {
@@ -384,7 +459,7 @@ async function createNewFolder() {
 async function deleteFile() {
   if (!contextMenuTarget) return;
 
-  const confirmed = confirm(`Are you sure you want to delete "${contextMenuTarget.name}"?`);
+  const confirmed = await showConfirm('Delete Note', `Are you sure you want to delete "${contextMenuTarget.name}"? This action cannot be undone.`);
   if (!confirmed) return;
 
   try {
@@ -415,7 +490,7 @@ async function deleteFile() {
 async function moveFileToFolder() {
   if (!contextMenuTarget) return;
 
-  const targetFolder = prompt('Enter target folder path (leave empty for root):');
+  const targetFolder = await showPrompt('Move Note', 'Enter target folder path (leave empty for root):');
   if (targetFolder === null) return;
 
   try {
@@ -540,7 +615,7 @@ async function savePassword() {
   const isProtected = document.getElementById('enable-password').checked;
 
   if (isProtected && !password) {
-    alert('Please enter a password');
+    await showAlert('Password Required', 'Please enter a password to enable protection.');
     return;
   }
 
@@ -567,12 +642,17 @@ async function savePassword() {
 
 // Share file
 async function shareFile() {
-  if (!contextMenuTarget) return;
+  if (!contextMenuTarget) {
+    console.error('No context menu target');
+    return;
+  }
 
+  // Capture the target before hiding context menu
+  const targetPath = contextMenuTarget.path;
   hideContextMenu();
 
   try {
-    const response = await fetch(`/api/file/share/${contextMenuTarget.path}`, {
+    const response = await fetch(`/api/file/share/${targetPath}`, {
       method: 'POST'
     });
 
@@ -584,9 +664,13 @@ async function shareFile() {
       openModal('share-modal');
       await loadFiles();
       updateStatus('Share link generated');
+    } else {
+      updateStatus('Error generating share link');
+      console.error('Error generating share link:', data.error);
     }
   } catch (error) {
     console.error('Error generating share link:', error);
+    updateStatus('Error generating share link');
   }
 }
 
@@ -665,7 +749,7 @@ async function importNotes() {
   const files = fileInput.files;
 
   if (!files || files.length === 0) {
-    alert('Please select at least one markdown file');
+    await showAlert('No Files Selected', 'Please select at least one markdown file to import.');
     return;
   }
 
@@ -774,9 +858,9 @@ async function changePassword() {
   }
 }
 
-function manageSharedNotes() {
+async function manageSharedNotes() {
   closeUserPanel();
-  alert('Shared notes management feature coming soon!');
+  await showAlert('Coming Soon', 'Shared notes management feature is coming in a future update!');
 }
 
 function closeUserPanel() {
@@ -821,6 +905,91 @@ function closeModal(modalId) {
   document.getElementById(modalId).classList.remove('active');
 }
 
+// Custom Alert Modal
+let alertResolve = null;
+function showAlert(title, message) {
+  return new Promise((resolve) => {
+    document.getElementById('alert-title').textContent = title;
+    document.getElementById('alert-message').textContent = message;
+    alertResolve = resolve;
+    openModal('alert-modal');
+  });
+}
+
+function closeAlertModal() {
+  closeModal('alert-modal');
+  if (alertResolve) {
+    alertResolve();
+    alertResolve = null;
+  }
+}
+
+// Custom Confirm Modal
+let confirmResolve = null;
+function showConfirm(title, message) {
+  return new Promise((resolve) => {
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-message').textContent = message;
+    confirmResolve = resolve;
+    openModal('confirm-modal');
+  });
+}
+
+function closeConfirmModal(result) {
+  closeModal('confirm-modal');
+  if (confirmResolve) {
+    confirmResolve(result);
+    confirmResolve = null;
+  }
+}
+
+// Custom Prompt Modal
+let promptResolve = null;
+let promptKeyHandler = null;
+
+function showPrompt(title, message, defaultValue = '') {
+  return new Promise((resolve) => {
+    document.getElementById('prompt-title').textContent = title;
+    document.getElementById('prompt-message').textContent = message;
+    const input = document.getElementById('prompt-input');
+    input.value = defaultValue;
+    input.placeholder = defaultValue;
+    promptResolve = resolve;
+
+    // Add Enter key handler
+    promptKeyHandler = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        closePromptModal(input.value);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closePromptModal(null);
+      }
+    };
+    input.addEventListener('keydown', promptKeyHandler);
+
+    openModal('prompt-modal');
+    // Focus input after modal opens
+    setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 100);
+  });
+}
+
+function closePromptModal(result) {
+  const input = document.getElementById('prompt-input');
+  if (promptKeyHandler) {
+    input.removeEventListener('keydown', promptKeyHandler);
+    promptKeyHandler = null;
+  }
+  closeModal('prompt-modal');
+  if (promptResolve) {
+    promptResolve(result);
+    promptResolve = null;
+  }
+}
+
 // Update status
 function updateStatus(message) {
   document.getElementById('status').textContent = message;
@@ -862,6 +1031,29 @@ document.addEventListener('keydown', (e) => {
     saveCurrentFile();
   }
 });
+
+// Mobile menu functionality
+const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+const sidebar = document.getElementById('sidebar');
+const sidebarOverlay = document.getElementById('sidebar-overlay');
+
+function toggleMobileSidebar() {
+  sidebar.classList.toggle('mobile-open');
+  sidebarOverlay.classList.toggle('active');
+}
+
+function closeMobileSidebar() {
+  sidebar.classList.remove('mobile-open');
+  sidebarOverlay.classList.remove('active');
+}
+
+if (mobileMenuBtn) {
+  mobileMenuBtn.addEventListener('click', toggleMobileSidebar);
+}
+
+if (sidebarOverlay) {
+  sidebarOverlay.addEventListener('click', closeMobileSidebar);
+}
 
 // Hide context menu and user panel on click outside
 document.addEventListener('click', (e) => {

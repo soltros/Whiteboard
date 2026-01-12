@@ -8,7 +8,7 @@ const multer = require('multer');
 const crypto = require('crypto');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 2452;
 const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(__dirname, 'users.json');
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
@@ -122,7 +122,7 @@ async function initializeSettings() {
     await fs.access(SETTINGS_FILE);
   } catch {
     const settings = {
-      publicUrlBase: 'http://localhost:3000'
+      publicUrlBase: `http://localhost:${PORT}`
     };
     await fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
   }
@@ -134,7 +134,7 @@ async function loadSettings() {
     const content = await fs.readFile(SETTINGS_FILE, 'utf-8');
     return JSON.parse(content);
   } catch {
-    return { publicUrlBase: 'http://localhost:3000' };
+    return { publicUrlBase: `http://localhost:${PORT}` };
   }
 }
 
@@ -601,6 +601,145 @@ async function getNotesForUser(userId) {
   return notes;
 }
 
+// API: Update note metadata (tags, password) - MUST come before generic /api/file/:noteId
+app.post('/api/file/metadata/:noteId', async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    const noteId = req.params.noteId;
+    const { tags, password, isPasswordProtected } = req.body;
+
+    const notePath = getNotePath(userId, noteId);
+
+    const content = await fs.readFile(notePath, 'utf-8');
+    const data = JSON.parse(content);
+
+    // Update tags
+    if (tags !== undefined) {
+      data.tags = tags;
+    }
+
+    // Update password protection
+    if (isPasswordProtected !== undefined) {
+      data.isPasswordProtected = isPasswordProtected;
+
+      if (isPasswordProtected && password) {
+        data.password = await bcrypt.hash(password, 10);
+      } else if (!isPasswordProtected) {
+        delete data.password;
+      }
+    }
+
+    data.updatedAt = new Date().toISOString();
+
+    await fs.writeFile(notePath, JSON.stringify(data, null, 2));
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API: Verify note password - MUST come before generic /api/file/:noteId
+app.post('/api/file/verify-password/*', async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    const filePath = req.params[0];
+    const { password } = req.body;
+
+    const userDir = await ensureUserDir(userId);
+    const fullPath = path.join(userDir, filePath);
+
+    const content = await fs.readFile(fullPath, 'utf-8');
+    const data = JSON.parse(content);
+
+    if (!data.isPasswordProtected || !data.password) {
+      return res.json({ success: true, valid: true });
+    }
+
+    const valid = await bcrypt.compare(password, data.password);
+    res.json({ success: true, valid });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API: Generate share link - MUST come before generic /api/file/:noteId
+app.post('/api/file/share/:noteId', async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    const noteId = req.params.noteId;
+
+    console.log('Share request - userId:', userId, 'noteId:', noteId);
+
+    const notePath = getNotePath(userId, noteId);
+    console.log('Note path:', notePath);
+
+    // Check if path exists and is a file
+    const stats = await fs.stat(notePath);
+    if (stats.isDirectory()) {
+      throw new Error('Path is a directory, expected a file');
+    }
+
+    const content = await fs.readFile(notePath, 'utf-8');
+    const data = JSON.parse(content);
+
+    // Generate unique share ID if not exists
+    if (!data.shareId) {
+      data.shareId = crypto.randomBytes(16).toString('hex');
+      data.updatedAt = new Date().toISOString();
+      await fs.writeFile(notePath, JSON.stringify(data, null, 2));
+
+      // Create metadata file in shared directory
+      await ensureSharedDir();
+      const sharedPath = path.join(SHARED_DIR, data.shareId + '.json');
+      await fs.writeFile(sharedPath, JSON.stringify({
+        userId,
+        noteId,
+        createdAt: new Date().toISOString()
+      }));
+    }
+
+    const settings = await loadSettings();
+    const shareUrl = `${settings.publicUrlBase}/shared/${data.shareId}`;
+
+    res.json({ success: true, shareUrl, shareId: data.shareId });
+  } catch (error) {
+    console.error('Error generating share link:', error);
+    console.error('Stack:', error.stack);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API: Remove share link - MUST come before generic /api/file/:noteId
+app.delete('/api/file/share/:noteId', async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    const noteId = req.params.noteId;
+    const notePath = getNotePath(userId, noteId);
+
+    const content = await fs.readFile(notePath, 'utf-8');
+    const data = JSON.parse(content);
+
+    if (data.shareId) {
+      // Remove shared metadata file
+      const sharedPath = path.join(SHARED_DIR, data.shareId + '.json');
+      try {
+        await fs.unlink(sharedPath);
+      } catch (error) {
+        console.error('Error deleting shared metadata:', error);
+      }
+
+      // Remove shareId from note
+      delete data.shareId;
+      data.updatedAt = new Date().toISOString();
+      await fs.writeFile(notePath, JSON.stringify(data, null, 2));
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // API: Get a specific file
 app.get('/api/file/:noteId', async (req, res) => {
   try {
@@ -804,133 +943,9 @@ app.delete('/api/file/:noteId', async (req, res) => {
   }
 });
 
-// API: Update note metadata (tags, password)
-app.post('/api/file/metadata/:noteId', async (req, res) => {
-  try {
-    const userId = req.session.userId;
-    const noteId = req.params.noteId;
-    const { tags, password, isPasswordProtected } = req.body;
-
-    const notePath = getNotePath(userId, noteId);
-
-    const content = await fs.readFile(notePath, 'utf-8');
-    const data = JSON.parse(content);
-
-    // Update tags
-    if (tags !== undefined) {
-      data.tags = tags;
-    }
-
-    // Update password protection
-    if (isPasswordProtected !== undefined) {
-      data.isPasswordProtected = isPasswordProtected;
-
-      if (isPasswordProtected && password) {
-        data.password = await bcrypt.hash(password, 10);
-      } else if (!isPasswordProtected) {
-        delete data.password;
-      }
-    }
-
-    data.updatedAt = new Date().toISOString();
-
-    await fs.writeFile(notePath, JSON.stringify(data, null, 2));
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// API: Verify note password
-app.post('/api/file/verify-password/*', async (req, res) => {
-  try {
-    const userId = req.session.userId;
-    const filePath = req.params[0];
-    const { password } = req.body;
-
-    const userDir = await ensureUserDir(userId);
-    const fullPath = path.join(userDir, filePath);
-
-    const content = await fs.readFile(fullPath, 'utf-8');
-    const data = JSON.parse(content);
-
-    if (!data.isPasswordProtected || !data.password) {
-      return res.json({ success: true, valid: true });
-    }
-
-    const valid = await bcrypt.compare(password, data.password);
-    res.json({ success: true, valid });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// API: Generate share link
-app.post('/api/file/share/*', async (req, res) => {
-  try {
-    const userId = req.session.userId;
-    const filePath = req.params[0];
-
-    const userDir = await ensureUserDir(userId);
-    const fullPath = path.join(userDir, filePath);
-
-    const content = await fs.readFile(fullPath, 'utf-8');
-    const data = JSON.parse(content);
-
-    // Generate unique share ID if not exists
-    if (!data.shareId) {
-      data.shareId = require('crypto').randomBytes(16).toString('hex');
-      data.updatedAt = new Date().toISOString();
-      await fs.writeFile(fullPath, JSON.stringify(data, null, 2));
-
-      // Create symlink in shared directory
-      await ensureSharedDir();
-      const sharedPath = path.join(SHARED_DIR, data.shareId + '.json');
-      await fs.writeFile(sharedPath, JSON.stringify({
-        userId,
-        filePath,
-        createdAt: new Date().toISOString()
-      }));
-    }
-
-    const settings = await loadSettings();
-    const shareUrl = `${settings.publicUrlBase}/api/shared/${data.shareId}`;
-
-    res.json({ success: true, shareUrl, shareId: data.shareId });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// API: Remove share link
-app.delete('/api/file/share/*', async (req, res) => {
-  try {
-    const userId = req.session.userId;
-    const filePath = req.params[0];
-
-    const userDir = await ensureUserDir(userId);
-    const fullPath = path.join(userDir, filePath);
-
-    const content = await fs.readFile(fullPath, 'utf-8');
-    const data = JSON.parse(content);
-
-    if (data.shareId) {
-      // Remove shared file
-      const sharedPath = path.join(SHARED_DIR, data.shareId + '.json');
-      try {
-        await fs.unlink(sharedPath);
-      } catch {}
-
-      // Remove shareId from file
-      delete data.shareId;
-      data.updatedAt = new Date().toISOString();
-      await fs.writeFile(fullPath, JSON.stringify(data, null, 2));
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
+// Serve shared note HTML viewer (public)
+app.get('/shared/:shareId', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'shared.html'));
 });
 
 // API: Access shared file (public)
@@ -944,10 +959,9 @@ app.get('/api/shared/:shareId', async (req, res) => {
     const sharedContent = await fs.readFile(sharedPath, 'utf-8');
     const sharedData = JSON.parse(sharedContent);
 
-    // Get actual file
-    const userDir = getUserDir(sharedData.userId);
-    const fullPath = path.join(userDir, sharedData.filePath);
-    const content = await fs.readFile(fullPath, 'utf-8');
+    // Get actual note file
+    const notePath = getNotePath(sharedData.userId, sharedData.noteId);
+    const content = await fs.readFile(notePath, 'utf-8');
     const fileData = JSON.parse(content);
 
     // Check password if protected
