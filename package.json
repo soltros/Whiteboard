@@ -1,0 +1,26 @@
+{
+  "name": "whiteboard",
+  "version": "1.0.0",
+  "description": "A rich text editor webapp that saves to markdown files",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": ["markdown", "editor", "wysiwyg"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "body-parser": "^1.20.2",
+    "turndown": "^7.1.2",
+    "marked": "^11.1.1",
+    "bcrypt": "^5.1.1",
+    "express-session": "^1.17.3",
+    "multer": "^1.4.5-lts.1",
+    "archiver": "^6.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
