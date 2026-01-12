@@ -339,7 +339,7 @@ Currently, no automated tests are included. Future versions will include:
 
 ## License
 
-ISC License
+GPLv3
 
 ## Contributing
 
