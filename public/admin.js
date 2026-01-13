@@ -1,4 +1,27 @@
+// Global fetch wrapper to handle session expiration
+const originalFetch = window.fetch;
+window.fetch = async function(...args) {
+  const response = await originalFetch(...args);
+
+  // If we get a 401 Unauthorized, the session has expired
+  if (response.status === 401 &&
+      !args[0].includes('/api/auth/login')) {
+    console.log('Session expired, redirecting to login...');
+
+    // Use handleSessionExpired if available, otherwise redirect directly
+    if (typeof handleSessionExpired === 'function') {
+      handleSessionExpired();
+    } else {
+      window.location.href = '/login.html';
+    }
+    return response;
+  }
+
+  return response;
+};
+
 let currentUser = null;
+let sessionCheckInterval = null;
 
 // Check if user is admin
 async function checkAuth() {
@@ -6,30 +29,76 @@ async function checkAuth() {
     const response = await fetch('/api/auth/me');
 
     if (!response.ok) {
-      window.location.href = '/login.html';
+      handleSessionExpired();
       return false;
     }
 
     const data = await response.json();
 
     if (!data.success) {
-      window.location.href = '/login.html';
+      handleSessionExpired();
       return false;
     }
 
     if (!data.user.isAdmin) {
+      alert('Admin access required. Redirecting to main page.');
       window.location.href = '/';
       return false;
     }
 
     currentUser = data.user;
     document.getElementById('current-user').textContent = `Logged in as ${data.user.username}`;
+
+    // Start periodic session validation
+    startSessionValidation();
+
     return true;
   } catch (error) {
     console.error('Auth check error:', error);
-    window.location.href = '/login.html';
+    handleSessionExpired();
     return false;
   }
+}
+
+// Handle expired session
+function handleSessionExpired() {
+  // Clear any timers
+  if (sessionCheckInterval) {
+    clearInterval(sessionCheckInterval);
+  }
+
+  // Show alert and redirect
+  alert('Session expired. Please log in again.');
+  window.location.href = '/login.html';
+}
+
+// Start periodic session validation
+function startSessionValidation() {
+  // Clear any existing interval
+  if (sessionCheckInterval) {
+    clearInterval(sessionCheckInterval);
+  }
+
+  // Check session every 5 minutes
+  sessionCheckInterval = setInterval(async () => {
+    try {
+      const response = await fetch('/api/auth/me');
+
+      if (!response.ok) {
+        handleSessionExpired();
+        return;
+      }
+
+      const data = await response.json();
+
+      if (!data.success || !data.user.isAdmin) {
+        handleSessionExpired();
+      }
+    } catch (error) {
+      console.error('Session validation error:', error);
+      // Don't immediately redirect on network errors
+    }
+  }, 5 * 60 * 1000); // 5 minutes
 }
 
 // Load settings
@@ -252,6 +321,91 @@ document.getElementById('new-user-btn').addEventListener('click', openNewUserMod
 
 // Settings button
 document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
+
+// Export all data
+document.getElementById('export-all-btn').addEventListener('click', async () => {
+  try {
+    const button = document.getElementById('export-all-btn');
+    button.disabled = true;
+    button.textContent = 'Exporting...';
+
+    const response = await fetch('/api/admin/export');
+
+    if (!response.ok) {
+      const data = await response.json();
+      alert(data.error || 'Failed to export data');
+      return;
+    }
+
+    // Download the file
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `whiteboard-backup-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+
+    alert('Data exported successfully');
+  } catch (error) {
+    console.error('Error exporting data:', error);
+    alert('Failed to export data');
+  } finally {
+    const button = document.getElementById('export-all-btn');
+    button.disabled = false;
+    button.textContent = 'Export All Data';
+  }
+});
+
+// Import data
+document.getElementById('import-all-btn').addEventListener('click', async () => {
+  const fileInput = document.getElementById('import-file');
+  const file = fileInput.files[0];
+
+  if (!file) {
+    alert('Please select a backup file to import');
+    return;
+  }
+
+  if (!confirm('Are you sure you want to import this backup? This will merge with existing data and cannot be undone.')) {
+    return;
+  }
+
+  try {
+    const button = document.getElementById('import-all-btn');
+    button.disabled = true;
+    button.textContent = 'Importing...';
+
+    const formData = new FormData();
+    formData.append('backup', file);
+
+    const response = await fetch('/api/admin/import', {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      alert(`Import successful!\nUsers imported: ${data.imported.users}\nNotes imported: ${data.imported.notes}`);
+      // Reload users list
+      await loadUsers();
+      // Clear file input
+      fileInput.value = '';
+    } else {
+      alert(data.error || 'Failed to import data');
+    }
+  } catch (error) {
+    console.error('Error importing data:', error);
+    alert('Failed to import data');
+  } finally {
+    const button = document.getElementById('import-all-btn');
+    button.disabled = false;
+    button.textContent = 'Import Data';
+  }
+});
 
 // Close modal on outside click
 document.getElementById('new-user-modal').addEventListener('click', (e) => {

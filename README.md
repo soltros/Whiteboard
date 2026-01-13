@@ -173,6 +173,8 @@ Whiteboard/
 ├── package.json           # Node.js dependencies
 ├── Dockerfile             # Docker image configuration
 ├── docker-compose.yml     # Docker Compose configuration
+├── migrate-to-database.js # Migration script for new database architecture
+├── MIGRATION.md           # Migration documentation
 ├── .dockerignore          # Files to exclude from Docker build
 ├── public/                # Frontend static files
 │   ├── index.html         # Main application page
@@ -185,6 +187,14 @@ Whiteboard/
 │   ├── admin.js           # Admin functionality
 │   └── admin.css          # Admin styles
 ├── data/                  # User notes and media (runtime)
+│   ├── _system/           # System-level metadata
+│   │   └── users-index.json   # Tracks all users with data
+│   └── username/          # Per-user directory
+│       ├── database.json      # Per-user note index (fast lookups)
+│       └── notes/             # User's notes
+│           ├── note-id.md     # Markdown content files
+│           └── media/         # Media files
+│               └── note-id/   # Per-note media directory
 ├── shared/                # Shared note metadata (runtime)
 ├── users.json             # User accounts (created on first run)
 └── settings.json          # Application settings (created on first run)
@@ -353,7 +363,86 @@ Contributions are welcome. Please:
 
 For issues, questions, or feature requests, please open an issue on the project repository.
 
+## Storage Architecture
+
+The application uses a **per-user database** architecture for optimal performance:
+
+### Structure
+```
+data/
+  ├── _system/
+  │   └── users-index.json        # System-level: tracks all users
+  └── username/
+      ├── database.json           # Per-user: indexes all notes with metadata
+      └── notes/
+          ├── note-id.md          # Raw markdown files
+          └── media/
+              └── note-id/        # Per-note media files
+```
+
+### Benefits
+- **Fast Traversal**: Single database.json read gives all note metadata
+- **Pure Markdown**: Content stored as standard .md files
+- **Scalable**: Each user has their own isolated database
+- **Simple Backups**: Database tracks structure, markdown files are portable
+- **System Metadata**: Central index tracks all users
+
+### Database Structure
+
+**System Index** (`data/_system/users-index.json`):
+```json
+{
+  "users": ["admin", "user1", "user2"]
+}
+```
+
+**User Database** (`data/username/database.json`):
+```json
+{
+  "notes": {
+    "abc123def456": {
+      "title": "My Note",
+      "tags": ["work", "important"],
+      "isPasswordProtected": false,
+      "shareId": "xyz789...",
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-02T00:00:00.000Z"
+    }
+  }
+}
+```
+
+**Markdown File** (`data/username/notes/abc123def456.md`):
+```markdown
+# My Note Content
+
+Pure markdown content here...
+```
+
+For migration from older versions, see [MIGRATION.md](MIGRATION.md) or run:
+```bash
+node migrate-to-database.js  # Dry run
+node migrate-to-database.js --execute  # Migrate
+```
+
 ## Changelog
+
+### Version 2.0.0
+- **BREAKING CHANGE**: Per-user database architecture
+- Each user gets their own database.json for fast note indexing
+- System-level users index for tracking all users
+- Pure markdown files (no metadata mixed in)
+- Media files organized per-note under notes/media/
+- Added visible Save button with state indicators
+- Migration script for upgrading from previous versions
+- Maintained backward compatibility during migration
+
+### Version 1.1.0
+- **BREAKING CHANGE**: Split note storage format (metadata.json + content.md)
+- Added migration script for legacy notes (migrate-notes.js)
+- Maintained backward compatibility with legacy note.json format
+- Improved performance for note list operations
+- Added detailed migration documentation
 
 ### Version 1.0.0
 - Initial release

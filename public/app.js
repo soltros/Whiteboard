@@ -21,14 +21,26 @@ window.fetch = async function(...args) {
   const response = await originalFetch(...args);
 
   // If we get a 401 Unauthorized, the session has expired
-  if (response.status === 401) {
+  // Don't redirect for auth endpoints (they're supposed to return 401)
+  if (response.status === 401 &&
+      !args[0].includes('/api/auth/login') &&
+      !args[0].includes('/api/shared/')) {
     console.log('Session expired, redirecting to login...');
-    window.location.href = '/login.html';
+
+    // Use handleSessionExpired if available, otherwise redirect directly
+    if (typeof handleSessionExpired === 'function') {
+      handleSessionExpired();
+    } else {
+      window.location.href = '/login.html';
+    }
     return response;
   }
 
   return response;
 };
+
+// Session validation interval (5 minutes)
+let sessionCheckInterval = null;
 
 // Check authentication
 async function checkAuth() {
@@ -36,14 +48,14 @@ async function checkAuth() {
     const response = await fetch('/api/auth/me');
 
     if (!response.ok) {
-      window.location.href = '/login.html';
+      handleSessionExpired();
       return false;
     }
 
     const data = await response.json();
 
     if (!data.success) {
-      window.location.href = '/login.html';
+      handleSessionExpired();
       return false;
     }
 
@@ -53,12 +65,61 @@ async function checkAuth() {
     // Update UI with user info
     updateUserInfo();
 
+    // Start periodic session validation
+    startSessionValidation();
+
     return true;
   } catch (error) {
     console.error('Auth check error:', error);
-    window.location.href = '/login.html';
+    handleSessionExpired();
     return false;
   }
+}
+
+// Handle expired session
+function handleSessionExpired() {
+  // Clear any timers
+  if (sessionCheckInterval) {
+    clearInterval(sessionCheckInterval);
+  }
+
+  // Show a brief message before redirect
+  updateStatus('Session expired. Redirecting to login...');
+
+  // Redirect to login after a brief delay
+  setTimeout(() => {
+    window.location.href = '/login.html';
+  }, 1000);
+}
+
+// Start periodic session validation
+function startSessionValidation() {
+  // Clear any existing interval
+  if (sessionCheckInterval) {
+    clearInterval(sessionCheckInterval);
+  }
+
+  // Check session every 5 minutes
+  sessionCheckInterval = setInterval(async () => {
+    try {
+      const response = await fetch('/api/auth/me');
+
+      if (!response.ok) {
+        handleSessionExpired();
+        return;
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        handleSessionExpired();
+      }
+    } catch (error) {
+      console.error('Session validation error:', error);
+      // Don't immediately redirect on network errors
+      // Let the next API call handle it
+    }
+  }, 5 * 60 * 1000); // 5 minutes
 }
 
 // Update user info in UI
@@ -125,6 +186,7 @@ function initEditor() {
 
   // Auto-save on text change
   quill.on('text-change', () => {
+    updateSaveButton('unsaved');
     clearTimeout(autoSaveTimer);
     autoSaveTimer = setTimeout(() => {
       if (currentFilePath) {
@@ -203,13 +265,14 @@ function quillToMarkdown() {
 // Convert Markdown to HTML and load into Quill
 function markdownToQuill(markdown) {
   const html = marked.parse(markdown);
-  quill.root.innerHTML = html;
+  const cleanHtml = DOMPurify.sanitize(html);
+  quill.root.innerHTML = cleanHtml;
 }
 
 // Load files from server
 async function loadFiles() {
   try {
-    const response = await fetch('/api/files');
+    const response = await fetch(`/api/files?t=${Date.now()}`);
     const data = await response.json();
 
     if (data.success) {
@@ -223,86 +286,9 @@ async function loadFiles() {
   }
 }
 
-// Render file tree
+// Render file tree (now just renders collage view since sidebar is removed)
 function renderFileTree(files, container = null, level = 0) {
-  const targetContainer = container || document.getElementById('file-tree');
-
-  if (!container) {
-    targetContainer.innerHTML = '';
-  }
-
-  files.forEach(item => {
-    const itemDiv = document.createElement('div');
-    itemDiv.className = 'file-item';
-    itemDiv.style.paddingLeft = `${level * 20 + 10}px`;
-    itemDiv.dataset.path = item.path;
-    itemDiv.dataset.type = item.type;
-
-    if (item.type === 'folder') {
-      itemDiv.innerHTML = `
-        <span class="folder-icon">📁</span>
-        <span class="file-name">${item.name}</span>
-      `;
-      itemDiv.classList.add('folder');
-
-      const childrenContainer = document.createElement('div');
-      childrenContainer.className = 'folder-children';
-
-      itemDiv.addEventListener('click', (e) => {
-        e.stopPropagation();
-        itemDiv.classList.toggle('open');
-        childrenContainer.classList.toggle('open');
-      });
-
-      targetContainer.appendChild(itemDiv);
-      targetContainer.appendChild(childrenContainer);
-
-      if (item.children && item.children.length > 0) {
-        renderFileTree(item.children, childrenContainer, level + 1);
-      }
-    } else {
-      const lockIcon = item.isPasswordProtected ? `
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="lock-icon">
-          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-        </svg>
-      ` : '';
-
-      const shareIcon = item.isShared ? `
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="share-icon">
-          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-        </svg>
-      ` : '';
-
-      const summary = !privacyMode && item.summary ? `<div class="file-summary">${item.summary}</div>` : '';
-
-      itemDiv.innerHTML = `
-        <div class="file-item-header">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="file-icon">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-            <polyline points="14 2 14 8 20 8"></polyline>
-          </svg>
-          <span class="file-name">${item.name}</span>
-          ${lockIcon || shareIcon ? `<span class="file-icons-group">${lockIcon}${shareIcon}</span>` : ''}
-        </div>
-        ${summary}
-      `;
-
-      itemDiv.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openFile(item.path);
-      });
-
-      // Right-click context menu
-      itemDiv.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        showContextMenu(e, item);
-      });
-
-      targetContainer.appendChild(itemDiv);
-    }
-  });
+  renderCollageView(files);
 }
 
 // Show context menu
@@ -368,15 +354,104 @@ async function openFile(filePath) {
       // Close mobile sidebar when file is opened
       closeMobileSidebar();
 
-      // Highlight current file in tree
-      document.querySelectorAll('.file-item').forEach(item => {
-        item.classList.remove('active');
-      });
+      // Show editor, hide collage
+      showEditor();
     }
   } catch (error) {
     console.error('Error opening file:', error);
     updateStatus('Error opening file');
   }
+}
+
+// Show editor, hide collage
+function showEditor() {
+  document.getElementById('editor-wrapper').style.display = 'block';
+  document.getElementById('collage-view').style.display = 'none';
+  document.getElementById('document-title').style.display = '';
+}
+
+// Show collage, hide editor
+function showCollage() {
+  document.getElementById('editor-wrapper').style.display = 'none';
+  document.getElementById('collage-view').style.display = 'block';
+  document.getElementById('document-title').style.display = 'none';
+
+  // Clear current file
+  currentFilePath = null;
+  currentFile = null;
+
+  // Clear document title
+  document.getElementById('document-title').value = '';
+}
+
+// Navigate to collections view (user-initiated)
+function navigateToCollections() {
+  showCollage();
+  updateStatus('Viewing all notes');
+}
+
+// Render collage view with note cards
+function renderCollageView(files) {
+  const collageGrid = document.getElementById('collage-grid');
+
+  if (!files || files.length === 0) {
+    collageGrid.innerHTML = `
+      <div class="collage-empty">
+        <svg class="collage-empty-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+          <polyline points="14 2 14 8 20 8"></polyline>
+          <line x1="12" y1="18" x2="12" y2="12"></line>
+          <line x1="9" y1="15" x2="15" y2="15"></line>
+        </svg>
+        <div class="collage-empty-text">No notes yet</div>
+        <div class="collage-empty-hint">Click "+ New Note" to get started</div>
+      </div>
+    `;
+    return;
+  }
+
+  // Clear the grid
+  collageGrid.innerHTML = '';
+
+  // Create cards with proper event listeners
+  files.forEach(note => {
+    const date = new Date(note.updatedAt).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+
+    const preview = note.summary || 'Empty note';
+    const tags = (note.tags || []).slice(0, 3); // Show max 3 tags
+
+    // Create card element
+    const card = document.createElement('div');
+    card.className = 'collage-card';
+    card.dataset.path = note.path;
+    card.innerHTML = `
+      <div class="collage-card-title">${escapeHtml(note.name)}</div>
+      ${!privacyMode ? `<div class="collage-card-preview">${escapeHtml(preview)}</div>` : ''}
+      <div class="collage-card-meta">
+        <div class="collage-card-tags">
+          ${tags.map(tag => `<span class="collage-card-tag">${escapeHtml(tag)}</span>`).join('')}
+        </div>
+        <div class="collage-card-date">${date}</div>
+      </div>
+    `;
+
+    // Add click event to open file
+    card.addEventListener('click', () => {
+      openFile(note.path);
+    });
+
+    // Add context menu event
+    card.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showContextMenu(e, note);
+    });
+
+    collageGrid.appendChild(card);
+  });
 }
 
 // Save current file
@@ -402,10 +477,45 @@ async function saveCurrentFile() {
     const data = await response.json();
     if (data.success) {
       updateStatus('Saved');
+      updateSaveButton('saved');
     }
   } catch (error) {
     console.error('Error saving file:', error);
     updateStatus('Error saving');
+    updateSaveButton('error');
+  }
+}
+
+// Manual save triggered by button click
+async function manualSave() {
+  if (!currentFilePath) {
+    updateStatus('No note open');
+    return;
+  }
+
+  updateSaveButton('saving');
+  updateStatus('Saving...');
+  await saveCurrentFile();
+}
+
+// Update save button state
+function updateSaveButton(state) {
+  const saveBtn = document.getElementById('save-btn');
+  if (!saveBtn) return;
+
+  // Remove all state classes
+  saveBtn.classList.remove('saving', 'saved', 'error', 'unsaved');
+
+  // Add the current state class
+  if (state) {
+    saveBtn.classList.add(state);
+  }
+
+  // Reset to default after 2 seconds
+  if (state === 'saved' || state === 'error') {
+    setTimeout(() => {
+      saveBtn.classList.remove(state);
+    }, 2000);
   }
 }
 
@@ -459,22 +569,38 @@ async function createNewFolder() {
 async function deleteFile() {
   if (!contextMenuTarget) return;
 
-  const confirmed = await showConfirm('Delete Note', `Are you sure you want to delete "${contextMenuTarget.name}"? This action cannot be undone.`);
+  const target = contextMenuTarget;
+  hideContextMenu();
+
+  const confirmed = await showConfirm('Delete Note', `Are you sure you want to delete "${target.name}"? This action cannot be undone.`);
   if (!confirmed) return;
 
   try {
-    const response = await fetch(`/api/file/${contextMenuTarget.path}`, {
+    const response = await fetch(`/api/file/${target.path}`, {
       method: 'DELETE'
     });
 
     const data = await response.json();
     if (data.success) {
-      if (currentFilePath === contextMenuTarget.path) {
-        currentFile = null;
-        currentFilePath = null;
-        quill.setText('');
-        document.getElementById('document-title').value = '';
+      if (currentFilePath === target.path) {
+          currentFile = null;
+          currentFilePath = null;
+          quill.setText('');
+          document.getElementById('document-title').value = '';
+        }
+
+        // Remove card from UI immediately
+      const cards = document.querySelectorAll('.collage-card');
+      const card = Array.from(cards).find(c => c.dataset.path === target.path);
+
+      if (card) {
+        card.remove();
+        const collageGrid = document.getElementById('collage-grid');
+        if (collageGrid && collageGrid.children.length === 0) {
+          renderCollageView([]);
+        }
       }
+
       await loadFiles();
       updateStatus('Deleted successfully');
     }
@@ -482,8 +608,6 @@ async function deleteFile() {
     console.error('Error deleting file:', error);
     updateStatus('Error deleting file');
   }
-
-  hideContextMenu();
 }
 
 // Move file to folder
@@ -701,6 +825,32 @@ function copyShareLink() {
   }
 }
 
+function copyTextToClipboard(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    updateStatus('Link copied to clipboard');
+  }).catch(err => {
+    console.error('Could not copy text: ', err);
+    // Fallback
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    document.body.appendChild(textArea);
+    textArea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textArea);
+    updateStatus('Link copied to clipboard');
+  });
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 // Search files
 let searchTimeout = null;
 async function searchFiles(query) {
@@ -714,27 +864,14 @@ async function searchFiles(query) {
     const data = await response.json();
 
     if (data.success) {
-      const fileTree = document.getElementById('file-tree');
-      fileTree.innerHTML = '';
-
-      if (data.results.length === 0) {
-        fileTree.innerHTML = '<div class="no-results">No results found</div>';
-        return;
-      }
-
-      data.results.forEach(result => {
-        const itemDiv = document.createElement('div');
-        itemDiv.className = 'file-item';
-        itemDiv.innerHTML = `
-          <span class="file-icon">📄</span>
-          <span class="file-name">${result.name}</span>
-        `;
-        itemDiv.addEventListener('click', () => openFile(result.path));
-        fileTree.appendChild(itemDiv);
-      });
+      renderCollageView(data.results);
+    } else {
+      // On failure or no results, show an empty collage view
+      renderCollageView([]);
     }
   } catch (error) {
     console.error('Error searching:', error);
+    updateStatus('Error during search');
   }
 }
 
@@ -860,7 +997,164 @@ async function changePassword() {
 
 async function manageSharedNotes() {
   closeUserPanel();
-  await showAlert('Coming Soon', 'Shared notes management feature is coming in a future update!');
+  openModal('shared-links-modal');
+  await loadSharedLinks();
+}
+
+// Open tag cloud modal
+async function openTagCloud() {
+  openModal('tag-cloud-modal');
+  await renderTagCloud();
+}
+
+// Render tag cloud
+async function renderTagCloud() {
+  const container = document.getElementById('tag-cloud-container');
+  container.innerHTML = '<div style="padding:20px;text-align:center;color:#666;">Loading...</div>';
+
+  try {
+    const response = await fetch('/api/files');
+    const data = await response.json();
+
+    if (!data.success || !data.files || data.files.length === 0) {
+      container.innerHTML = '<div style="padding:20px;text-align:center;color:#666;">No tags found</div>';
+      return;
+    }
+
+    // Count tag frequencies
+    const tagCounts = {};
+    data.files.forEach(file => {
+      if (file.tags && Array.isArray(file.tags)) {
+        file.tags.forEach(tag => {
+          tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+        });
+      }
+    });
+
+    // Convert to array and sort by count
+    const tags = Object.entries(tagCounts)
+      .sort((a, b) => b[1] - a[1]);
+
+    if (tags.length === 0) {
+      container.innerHTML = '<div style="padding:20px;text-align:center;color:#666;">No tags found</div>';
+      return;
+    }
+
+    // Find min and max counts for sizing
+    const counts = tags.map(([_, count]) => count);
+    const minCount = Math.min(...counts);
+    const maxCount = Math.max(...counts);
+
+    // Generate tag cloud HTML
+    container.innerHTML = '';
+    tags.forEach(([tag, count]) => {
+      // Calculate size (font-size between 12px and 36px)
+      const size = minCount === maxCount
+        ? 20
+        : 12 + ((count - minCount) / (maxCount - minCount)) * 24;
+
+      const tagElement = document.createElement('span');
+      tagElement.className = 'tag-cloud-item';
+      tagElement.textContent = tag;
+      tagElement.style.fontSize = `${size}px`;
+      tagElement.title = `${count} note${count > 1 ? 's' : ''}`;
+
+      // Click to filter by tag
+      tagElement.addEventListener('click', () => {
+        filterByTag(tag);
+        closeModal('tag-cloud-modal');
+      });
+
+      container.appendChild(tagElement);
+    });
+  } catch (error) {
+    console.error('Error loading tag cloud:', error);
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:#e53935;">Error loading tags</div>';
+  }
+}
+
+// Filter notes by tag
+function filterByTag(tag) {
+  const searchInput = document.getElementById('search');
+  searchInput.value = tag;
+  searchFiles(tag);
+  updateStatus(`Filtered by tag: ${tag}`);
+}
+
+async function loadSharedLinks() {
+  const container = document.getElementById('shared-links-list');
+  container.innerHTML = '<div style="padding:20px;text-align:center;color:#666;">Loading...</div>';
+
+  try {
+    const response = await fetch('/api/shares');
+    const data = await response.json();
+
+    if (data.success) {
+      if (!data.shares || data.shares.length === 0) {
+        container.innerHTML = '<div style="padding:20px;text-align:center;color:#666;">No active shared links</div>';
+        return;
+      }
+
+      container.innerHTML = '';
+      data.shares.forEach(share => {
+        const item = document.createElement('div');
+        item.className = 'shared-link-item';
+        
+        const date = new Date(share.createdAt).toLocaleDateString();
+        
+        item.innerHTML = `
+          <div class="shared-link-info">
+            <div class="shared-link-title">${escapeHtml(share.title)}</div>
+            <div class="shared-link-url"><a href="${share.shareUrl}" target="_blank">${share.shareUrl}</a></div>
+            <div style="font-size:0.8em;color:#999;margin-top:2px;">Created: ${date} ${share.isPasswordProtected ? '🔒' : ''}</div>
+          </div>
+          <div class="shared-link-actions">
+            <button class="btn-icon" title="Copy Link" onclick="copyTextToClipboard('${share.shareUrl}')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+            <button class="btn-icon delete" title="Stop Sharing" onclick="unshareNote('${share.noteId}', '${escapeHtml(share.title).replace(/'/g, "\\'")}')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+        `;
+        container.appendChild(item);
+      });
+    } else {
+      container.innerHTML = '<div style="padding:20px;text-align:center;color:red;">Failed to load shared links</div>';
+    }
+  } catch (error) {
+    console.error('Error loading shares:', error);
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:red;">Error loading shared links</div>';
+  }
+}
+
+async function unshareNote(noteId, title) {
+  const confirmed = await showConfirm('Stop Sharing', `Are you sure you want to stop sharing "${title}"? The link will no longer work.`);
+  if (!confirmed) return;
+  
+  try {
+    const response = await fetch(`/api/file/share/${noteId}`, {
+      method: 'DELETE'
+    });
+    
+    const data = await response.json();
+    if (data.success) {
+      await loadSharedLinks();
+      // Also update file tree if visible
+      loadFiles(); 
+    } else {
+      await showAlert('Error', data.error || 'Failed to stop sharing');
+    }
+  } catch (error) {
+    console.error('Error unsharing:', error);
+    await showAlert('Error', 'Failed to stop sharing');
+  }
 }
 
 function closeUserPanel() {
@@ -874,21 +1168,9 @@ function togglePrivacyMode() {
 
   if (privacyMode) {
     privacyBtn.classList.add('active');
-    privacyBtn.innerHTML = `
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-      </svg>
-    `;
     updateStatus('Privacy mode enabled');
   } else {
     privacyBtn.classList.remove('active');
-    privacyBtn.innerHTML = `
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-      </svg>
-    `;
     updateStatus('Privacy mode disabled');
   }
 
@@ -1038,13 +1320,13 @@ const sidebar = document.getElementById('sidebar');
 const sidebarOverlay = document.getElementById('sidebar-overlay');
 
 function toggleMobileSidebar() {
-  sidebar.classList.toggle('mobile-open');
-  sidebarOverlay.classList.toggle('active');
+  if (sidebar) sidebar.classList.toggle('mobile-open');
+  if (sidebarOverlay) sidebarOverlay.classList.toggle('active');
 }
 
 function closeMobileSidebar() {
-  sidebar.classList.remove('mobile-open');
-  sidebarOverlay.classList.remove('active');
+  if (sidebar) sidebar.classList.remove('mobile-open');
+  if (sidebarOverlay) sidebarOverlay.classList.remove('active');
 }
 
 if (mobileMenuBtn) {
@@ -1083,5 +1365,7 @@ checkAuth().then(isAuthenticated => {
   if (isAuthenticated) {
     initEditor();
     loadFiles();
+    // Start with collage view visible
+    showCollage();
   }
 });

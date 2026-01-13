@@ -10,6 +10,8 @@ const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 2452;
 const DATA_DIR = path.join(__dirname, 'data');
+const SYSTEM_DIR = path.join(DATA_DIR, '_system');
+const USERS_INDEX_FILE = path.join(SYSTEM_DIR, 'users-index.json');
 const USERS_FILE = path.join(__dirname, 'users.json');
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
 const SHARED_DIR = path.join(__dirname, 'shared');
@@ -35,11 +37,11 @@ const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
     const userId = req.session.userId;
     const noteId = req.params.noteId;
-    const noteDir = path.join(DATA_DIR, userId, noteId, 'media');
+    const mediaDir = getNoteMediaDir(userId, noteId);
 
     try {
-      await fs.mkdir(noteDir, { recursive: true });
-      cb(null, noteDir);
+      await fs.mkdir(mediaDir, { recursive: true });
+      cb(null, mediaDir);
     } catch (error) {
       cb(error);
     }
@@ -64,6 +66,21 @@ const upload = multer({
     cb(new Error('Only image files are allowed'));
   }
 });
+
+// Wrapper for upload middleware to handle errors
+const uploadMiddleware = (req, res, next) => {
+  const uploader = upload.single('image');
+  uploader(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      // A Multer error occurred when uploading (e.g. file size)
+      return res.status(400).json({ success: false, error: `Upload error: ${err.message}` });
+    } else if (err) {
+      // An unknown error occurred when uploading (e.g. file type)
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    next();
+  });
+};
 
 // Auth middleware - protect all other routes
 app.use((req, res, next) => {
@@ -174,22 +191,96 @@ async function ensureDataDir() {
   } catch {
     await fs.mkdir(DATA_DIR, { recursive: true });
   }
+  // Ensure system directory exists
+  try {
+    await fs.access(SYSTEM_DIR);
+  } catch {
+    await fs.mkdir(SYSTEM_DIR, { recursive: true });
+    // Initialize empty users index
+    await fs.writeFile(USERS_INDEX_FILE, JSON.stringify({ users: [] }, null, 2));
+  }
 }
 
 // Get user's directory path
 function getUserDir(userId) {
-  return path.join(DATA_DIR, userId);
+  return path.join(DATA_DIR, path.basename(userId));
+}
+
+// Get user's database file path
+function getUserDatabasePath(userId) {
+  return path.join(getUserDir(userId), 'database.json');
+}
+
+// Get user's notes directory
+function getUserNotesDir(userId) {
+  return path.join(getUserDir(userId), 'notes');
 }
 
 // Ensure user directory exists
 async function ensureUserDir(userId) {
   const userDir = getUserDir(userId);
+  const notesDir = getUserNotesDir(userId);
+  const dbPath = getUserDatabasePath(userId);
+
   try {
     await fs.access(userDir);
   } catch {
     await fs.mkdir(userDir, { recursive: true });
+    await fs.mkdir(notesDir, { recursive: true });
+    // Initialize empty database for new user
+    await fs.writeFile(dbPath, JSON.stringify({ notes: {} }, null, 2));
+
+    // Add user to system index
+    await addUserToSystemIndex(userId);
   }
+
+  // Ensure notes directory exists even if user dir exists
+  try {
+    await fs.access(notesDir);
+  } catch {
+    await fs.mkdir(notesDir, { recursive: true });
+  }
+
+  // Ensure database exists
+  try {
+    await fs.access(dbPath);
+  } catch {
+    await fs.writeFile(dbPath, JSON.stringify({ notes: {} }, null, 2));
+  }
+
   return userDir;
+}
+
+// Add user to system index
+async function addUserToSystemIndex(userId) {
+  try {
+    const indexContent = await fs.readFile(USERS_INDEX_FILE, 'utf-8');
+    const index = JSON.parse(indexContent);
+
+    if (!index.users.includes(userId)) {
+      index.users.push(userId);
+      await fs.writeFile(USERS_INDEX_FILE, JSON.stringify(index, null, 2));
+    }
+  } catch (error) {
+    console.error('Error updating system index:', error);
+  }
+}
+
+// Load user database
+async function loadUserDatabase(userId) {
+  const dbPath = getUserDatabasePath(userId);
+  try {
+    const content = await fs.readFile(dbPath, 'utf-8');
+    return JSON.parse(content);
+  } catch {
+    return { notes: {} };
+  }
+}
+
+// Save user database
+async function saveUserDatabase(userId, database) {
+  const dbPath = getUserDatabasePath(userId);
+  await fs.writeFile(dbPath, JSON.stringify(database, null, 2));
 }
 
 // Generate unique note ID
@@ -197,36 +288,136 @@ function generateNoteId() {
   return crypto.randomBytes(8).toString('hex');
 }
 
-// Get note directory path
-function getNoteDir(userId, noteId) {
-  return path.join(DATA_DIR, userId, noteId);
+// Get note file path (markdown file)
+function getNoteFilePath(userId, noteId) {
+  return path.join(getUserNotesDir(userId), `${path.basename(noteId)}.md`);
 }
 
-// Get note file path
-function getNotePath(userId, noteId) {
-  return path.join(getNoteDir(userId, noteId), 'note.json');
+// Get note media directory
+function getNoteMediaDir(userId, noteId) {
+  return path.join(getUserNotesDir(userId), 'media', path.basename(noteId));
+}
+
+// Legacy support: Get old note directory path
+function getLegacyNoteDir(userId, noteId) {
+  return path.join(DATA_DIR, path.basename(userId), path.basename(noteId));
+}
+
+// Read note data from database + markdown file
+async function readNoteData(userId, noteId) {
+  const database = await loadUserDatabase(userId);
+  const noteMetadata = database.notes[noteId];
+
+  if (!noteMetadata) {
+    // Try legacy format for backward compatibility
+    return await readLegacyNoteData(userId, noteId);
+  }
+
+  // Read markdown content from file
+  const notePath = getNoteFilePath(userId, noteId);
+  let markdown = '';
+  try {
+    markdown = await fs.readFile(notePath, 'utf-8');
+  } catch (e) {
+    // File might not exist yet
+  }
+
+  return { ...noteMetadata, markdown };
+}
+
+// Legacy support: Read old format notes
+async function readLegacyNoteData(userId, noteId) {
+  const legacyDir = getLegacyNoteDir(userId, noteId);
+
+  // Try split format (metadata.json + content.md)
+  try {
+    const metaPath = path.join(legacyDir, 'metadata.json');
+    const contentPath = path.join(legacyDir, 'content.md');
+
+    const metaContent = await fs.readFile(metaPath, 'utf-8');
+    const metadata = JSON.parse(metaContent);
+
+    let markdown = '';
+    try {
+      markdown = await fs.readFile(contentPath, 'utf-8');
+    } catch (e) {
+      // Content file might not exist yet or empty
+    }
+
+    return { ...metadata, markdown };
+  } catch (e) {
+    // Try old single-file format (note.json)
+    const legacyPath = path.join(legacyDir, 'note.json');
+    const legacyContent = await fs.readFile(legacyPath, 'utf-8');
+    return JSON.parse(legacyContent);
+  }
+}
+
+// Write note data to database + markdown file
+async function writeNoteData(userId, noteId, data) {
+  const { markdown, ...metadata } = data;
+
+  // Update database
+  const database = await loadUserDatabase(userId);
+  database.notes[noteId] = metadata;
+  await saveUserDatabase(userId, database);
+
+  // Write markdown file
+  const notePath = getNoteFilePath(userId, noteId);
+  await fs.writeFile(notePath, markdown || '');
 }
 
 // AUTH ROUTES
+
+// Rate limiting state
+const loginAttempts = new Map();
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_TIME = 15 * 60 * 1000; // 15 minutes
+
+function checkRateLimit(ip) {
+  const record = loginAttempts.get(ip);
+  if (!record) return true;
+  if (Date.now() - record.timestamp > LOCKOUT_TIME) {
+    loginAttempts.delete(ip);
+    return true;
+  }
+  return record.count < MAX_LOGIN_ATTEMPTS;
+}
+
+function recordFailedAttempt(ip) {
+  const record = loginAttempts.get(ip);
+  if (!record || Date.now() - record.timestamp > LOCKOUT_TIME) {
+    loginAttempts.set(ip, { count: 1, timestamp: Date.now() });
+  } else {
+    record.count++;
+  }
+}
 
 // Login
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
+    const ip = req.ip || req.connection.remoteAddress;
 
     if (!username || !password) {
       return res.status(400).json({ success: false, error: 'Username and password required' });
+    }
+
+    if (!checkRateLimit(ip)) {
+      return res.status(429).json({ success: false, error: 'Too many failed attempts. Please try again later.' });
     }
 
     const users = await loadUsers();
     const user = users[username];
 
     if (!user) {
+      recordFailedAttempt(ip);
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
+      recordFailedAttempt(ip);
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
@@ -479,10 +670,186 @@ app.put('/api/admin/settings', requireAdmin, async (req, res) => {
   }
 });
 
+// BACKUP & RESTORE ROUTES (Admin only)
+
+// Export all data
+app.get('/api/admin/export', requireAdmin, async (req, res) => {
+  try {
+    const backup = {
+      version: '1.0',
+      timestamp: new Date().toISOString(),
+      users: {},
+      usersIndex: {},
+      userData: {}
+    };
+
+    // Export users.json (with hashed passwords)
+    backup.users = await loadUsers();
+
+    // Export users-index.json
+    try {
+      const indexContent = await fs.readFile(USERS_INDEX_FILE, 'utf-8');
+      backup.usersIndex = JSON.parse(indexContent);
+    } catch (error) {
+      backup.usersIndex = { users: [] };
+    }
+
+    // Export all user data (databases and notes)
+    for (const username of Object.keys(backup.users)) {
+      try {
+        const userDir = getUserDir(username);
+        const dbPath = getUserDatabasePath(username);
+        const notesDir = getUserNotesDir(username);
+
+        backup.userData[username] = {
+          database: {},
+          notes: {}
+        };
+
+        // Read user's database
+        try {
+          const dbContent = await fs.readFile(dbPath, 'utf-8');
+          backup.userData[username].database = JSON.parse(dbContent);
+        } catch (error) {
+          backup.userData[username].database = { notes: {} };
+        }
+
+        // Read all note markdown files
+        try {
+          const noteFiles = await fs.readdir(notesDir);
+          for (const file of noteFiles) {
+            if (file.endsWith('.md')) {
+              const noteId = file.replace('.md', '');
+              const notePath = path.join(notesDir, file);
+              const markdown = await fs.readFile(notePath, 'utf-8');
+              backup.userData[username].notes[noteId] = markdown;
+            }
+          }
+        } catch (error) {
+          // Notes directory might not exist or be empty
+        }
+      } catch (error) {
+        console.error(`Error exporting data for user ${username}:`, error);
+      }
+    }
+
+    // Send as JSON file
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename=whiteboard-backup-${Date.now()}.json`);
+    res.send(JSON.stringify(backup, null, 2));
+  } catch (error) {
+    console.error('Error exporting data:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Configure multer for backup file upload
+const backupUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
+});
+
+// Import all data
+app.post('/api/admin/import', requireAdmin, backupUpload.single('backup'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'No backup file provided' });
+    }
+
+    const backupContent = req.file.buffer.toString('utf-8');
+    const backup = JSON.parse(backupContent);
+
+    // Validate backup structure
+    if (!backup.version || !backup.users || !backup.userData) {
+      return res.status(400).json({ success: false, error: 'Invalid backup file format' });
+    }
+
+    let importedUsers = 0;
+    let importedNotes = 0;
+
+    // Import users (merge with existing)
+    const existingUsers = await loadUsers();
+    for (const [username, userData] of Object.entries(backup.users)) {
+      if (!existingUsers[username]) {
+        existingUsers[username] = userData;
+        importedUsers++;
+
+        // Create user directory
+        await ensureUserDir(username);
+      }
+    }
+    await saveUsers(existingUsers);
+
+    // Update users index
+    if (backup.usersIndex) {
+      try {
+        const existingIndex = JSON.parse(await fs.readFile(USERS_INDEX_FILE, 'utf-8'));
+        for (const username of backup.usersIndex.users || []) {
+          if (!existingIndex.users.includes(username)) {
+            existingIndex.users.push(username);
+          }
+        }
+        await fs.writeFile(USERS_INDEX_FILE, JSON.stringify(existingIndex, null, 2));
+      } catch (error) {
+        console.error('Error updating users index:', error);
+      }
+    }
+
+    // Import user data (databases and notes)
+    for (const [username, userData] of Object.entries(backup.userData)) {
+      try {
+        await ensureUserDir(username);
+
+        // Import database
+        if (userData.database) {
+          const existingDb = await loadUserDatabase(username);
+
+          // Merge notes (don't overwrite existing ones)
+          for (const [noteId, noteData] of Object.entries(userData.database.notes || {})) {
+            if (!existingDb.notes[noteId]) {
+              existingDb.notes[noteId] = noteData;
+              importedNotes++;
+            }
+          }
+
+          await saveUserDatabase(username, existingDb);
+        }
+
+        // Import note markdown files
+        if (userData.notes) {
+          for (const [noteId, markdown] of Object.entries(userData.notes)) {
+            const notePath = getNoteFilePath(username, noteId);
+            try {
+              await fs.access(notePath);
+              // File exists, skip
+            } catch {
+              // File doesn't exist, write it
+              await fs.writeFile(notePath, markdown);
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`Error importing data for user ${username}:`, error);
+      }
+    }
+
+    res.json({
+      success: true,
+      imported: {
+        users: importedUsers,
+        notes: importedNotes
+      }
+    });
+  } catch (error) {
+    console.error('Error importing data:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // IMAGE/MEDIA ROUTES
 
 // Upload image for a note
-app.post('/api/notes/:noteId/upload', upload.single('image'), async (req, res) => {
+app.post('/api/notes/:noteId/upload', uploadMiddleware, async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No file uploaded' });
@@ -512,12 +879,8 @@ app.get('/api/media/:userId/:noteId/:filename', async (req, res) => {
 
     if (requestUserId !== userId) {
       // Check if note is shared
-      const noteDir = path.join(DATA_DIR, userId, noteId);
-      const notePath = path.join(noteDir, 'note.json');
-
       try {
-        const content = await fs.readFile(notePath, 'utf-8');
-        const noteData = JSON.parse(content);
+        const noteData = await readNoteData(userId, noteId);
 
         if (!noteData.shareId) {
           return res.status(403).json({ success: false, error: 'Access denied' });
@@ -527,7 +890,9 @@ app.get('/api/media/:userId/:noteId/:filename', async (req, res) => {
       }
     }
 
-    const mediaPath = path.join(DATA_DIR, userId, noteId, 'media', filename);
+    const mediaPath = path.join(getNoteMediaDir(userId, noteId), path.basename(filename));
+    // Security: Add CSP headers to prevent XSS in SVGs or other files
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
     res.sendFile(mediaPath);
   } catch (error) {
     res.status(404).json({ success: false, error: 'File not found' });
@@ -550,48 +915,49 @@ app.get('/api/files', async (req, res) => {
 
 // Get all notes for a user
 async function getNotesForUser(userId) {
-  const userDir = getUserDir(userId);
-  const entries = await fs.readdir(userDir, { withFileTypes: true });
+  const database = await loadUserDatabase(userId);
   const notes = [];
 
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      const noteId = entry.name;
-      const notePath = getNotePath(userId, noteId);
-
+  for (const [noteId, metadata] of Object.entries(database.notes)) {
+    try {
+      // Read markdown file for summary
+      const notePath = getNoteFilePath(userId, noteId);
+      let markdown = '';
       try {
-        const content = await fs.readFile(notePath, 'utf-8');
-        const data = JSON.parse(content);
-
-        // Create a summary from markdown (first 100 characters)
-        let summary = '';
-        if (data.markdown) {
-          summary = data.markdown
-            .replace(/[#*_~`\[\]]/g, '') // Remove markdown formatting
-            .replace(/\n+/g, ' ') // Replace newlines with spaces
-            .trim()
-            .substring(0, 100);
-          if (data.markdown.length > 100) {
-            summary += '...';
-          }
-        }
-
-        notes.push({
-          id: noteId,
-          name: data.title || 'Untitled',
-          path: noteId,
-          type: 'file',
-          tags: data.tags || [],
-          isPasswordProtected: data.isPasswordProtected || false,
-          isShared: !!data.shareId,
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt,
-          summary: summary
-        });
-      } catch (error) {
-        // Skip invalid note directories
-        console.error(`Error reading note ${noteId}:`, error.message);
+        markdown = await fs.readFile(notePath, 'utf-8');
+      } catch (e) {
+        // File might not exist
       }
+
+      // Create a summary from markdown (first 100 characters)
+      let summary = '';
+      if (markdown) {
+        summary = markdown
+          .replace(/[#*_~`\[\]]/g, '') // Remove markdown formatting
+          .replace(/\n+/g, ' ') // Replace newlines with spaces
+          .trim()
+          .substring(0, 100);
+        if (markdown.length > 100) {
+          summary += '...';
+        }
+      }
+
+      notes.push({
+        id: noteId,
+        name: metadata.title || 'Untitled',
+        path: noteId,
+        type: 'file',
+        tags: metadata.tags || [],
+        isPasswordProtected: metadata.isPasswordProtected || false,
+        isShared: !!metadata.shareId,
+        shareId: metadata.shareId,
+        createdAt: metadata.createdAt,
+        updatedAt: metadata.updatedAt,
+        summary: summary
+      });
+    } catch (error) {
+      // Skip invalid notes
+      console.error(`Error reading note ${noteId}:`, error.message);
     }
   }
 
@@ -608,10 +974,7 @@ app.post('/api/file/metadata/:noteId', async (req, res) => {
     const noteId = req.params.noteId;
     const { tags, password, isPasswordProtected } = req.body;
 
-    const notePath = getNotePath(userId, noteId);
-
-    const content = await fs.readFile(notePath, 'utf-8');
-    const data = JSON.parse(content);
+    const data = await readNoteData(userId, noteId);
 
     // Update tags
     if (tags !== undefined) {
@@ -631,25 +994,21 @@ app.post('/api/file/metadata/:noteId', async (req, res) => {
 
     data.updatedAt = new Date().toISOString();
 
-    await fs.writeFile(notePath, JSON.stringify(data, null, 2));
+    await writeNoteData(userId, noteId, data);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// API: Verify note password - MUST come before generic /api/file/:noteId
-app.post('/api/file/verify-password/*', async (req, res) => {
+// API: Verify note password
+app.post('/api/file/verify-password/:noteId', async (req, res) => {
   try {
     const userId = req.session.userId;
-    const filePath = req.params[0];
+    const noteId = req.params.noteId;
     const { password } = req.body;
 
-    const userDir = await ensureUserDir(userId);
-    const fullPath = path.join(userDir, filePath);
-
-    const content = await fs.readFile(fullPath, 'utf-8');
-    const data = JSON.parse(content);
+    const data = await readNoteData(userId, noteId);
 
     if (!data.isPasswordProtected || !data.password) {
       return res.json({ success: true, valid: true });
@@ -662,31 +1021,44 @@ app.post('/api/file/verify-password/*', async (req, res) => {
   }
 });
 
+// API: Get all shared notes
+app.get('/api/shares', async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    const notes = await getNotesForUser(userId);
+    const settings = await loadSettings();
+
+    const shares = notes
+      .filter(note => note.isShared)
+      .map(note => ({
+        noteId: note.id,
+        title: note.name,
+        shareId: note.shareId,
+        shareUrl: `${settings.publicUrlBase}/shared/${note.shareId}`,
+        isPasswordProtected: note.isPasswordProtected,
+        createdAt: note.createdAt
+      }));
+
+    res.json({ success: true, shares });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // API: Generate share link - MUST come before generic /api/file/:noteId
 app.post('/api/file/share/:noteId', async (req, res) => {
   try {
     const userId = req.session.userId;
     const noteId = req.params.noteId;
 
-    console.log('Share request - userId:', userId, 'noteId:', noteId);
-
-    const notePath = getNotePath(userId, noteId);
-    console.log('Note path:', notePath);
-
-    // Check if path exists and is a file
-    const stats = await fs.stat(notePath);
-    if (stats.isDirectory()) {
-      throw new Error('Path is a directory, expected a file');
-    }
-
-    const content = await fs.readFile(notePath, 'utf-8');
-    const data = JSON.parse(content);
+    const data = await readNoteData(userId, noteId);
 
     // Generate unique share ID if not exists
     if (!data.shareId) {
       data.shareId = crypto.randomBytes(16).toString('hex');
       data.updatedAt = new Date().toISOString();
-      await fs.writeFile(notePath, JSON.stringify(data, null, 2));
+      
+      await writeNoteData(userId, noteId, data);
 
       // Create metadata file in shared directory
       await ensureSharedDir();
@@ -714,14 +1086,11 @@ app.delete('/api/file/share/:noteId', async (req, res) => {
   try {
     const userId = req.session.userId;
     const noteId = req.params.noteId;
-    const notePath = getNotePath(userId, noteId);
-
-    const content = await fs.readFile(notePath, 'utf-8');
-    const data = JSON.parse(content);
+    const data = await readNoteData(userId, noteId);
 
     if (data.shareId) {
       // Remove shared metadata file
-      const sharedPath = path.join(SHARED_DIR, data.shareId + '.json');
+      const sharedPath = path.join(SHARED_DIR, path.basename(data.shareId) + '.json');
       try {
         await fs.unlink(sharedPath);
       } catch (error) {
@@ -731,7 +1100,7 @@ app.delete('/api/file/share/:noteId', async (req, res) => {
       // Remove shareId from note
       delete data.shareId;
       data.updatedAt = new Date().toISOString();
-      await fs.writeFile(notePath, JSON.stringify(data, null, 2));
+      await writeNoteData(userId, noteId, data);
     }
 
     res.json({ success: true });
@@ -745,10 +1114,7 @@ app.get('/api/file/:noteId', async (req, res) => {
   try {
     const userId = req.session.userId;
     const noteId = req.params.noteId;
-    const notePath = getNotePath(userId, noteId);
-
-    const content = await fs.readFile(notePath, 'utf-8');
-    const data = JSON.parse(content);
+    const data = await readNoteData(userId, noteId);
     res.json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -762,11 +1128,7 @@ app.post('/api/file/:noteId', async (req, res) => {
     const noteId = req.params.noteId;
     const { markdown, title, tags, password, isPasswordProtected } = req.body;
 
-    const noteDir = getNoteDir(userId, noteId);
-    const notePath = getNotePath(userId, noteId);
-
-    // Ensure the note directory exists
-    await fs.mkdir(noteDir, { recursive: true });
+    await ensureUserDir(userId);
 
     const data = {
       title: title || 'Untitled',
@@ -779,8 +1141,7 @@ app.post('/api/file/:noteId', async (req, res) => {
 
     // If file exists, preserve createdAt, shareId, and password if not updating
     try {
-      const existing = await fs.readFile(notePath, 'utf-8');
-      const existingData = JSON.parse(existing);
+      const existingData = await readNoteData(userId, noteId);
       data.createdAt = existingData.createdAt;
       data.shareId = existingData.shareId;
 
@@ -797,7 +1158,7 @@ app.post('/api/file/:noteId', async (req, res) => {
       }
     }
 
-    await fs.writeFile(notePath, JSON.stringify(data, null, 2));
+    await writeNoteData(userId, noteId, data);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -813,11 +1174,6 @@ app.post('/api/files/new', async (req, res) => {
     await ensureUserDir(userId);
 
     const noteId = generateNoteId();
-    const noteDir = getNoteDir(userId, noteId);
-    const notePath = getNotePath(userId, noteId);
-
-    // Create the note directory
-    await fs.mkdir(noteDir, { recursive: true });
 
     const data = {
       title: name || 'Untitled',
@@ -828,7 +1184,7 @@ app.post('/api/files/new', async (req, res) => {
       updatedAt: new Date().toISOString()
     };
 
-    await fs.writeFile(notePath, JSON.stringify(data, null, 2));
+    await writeNoteData(userId, noteId, data);
     res.json({ success: true, noteId, path: noteId });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -848,11 +1204,6 @@ app.post('/api/notes/import', async (req, res) => {
     await ensureUserDir(userId);
 
     const noteId = generateNoteId();
-    const noteDir = getNoteDir(userId, noteId);
-    const notePath = getNotePath(userId, noteId);
-
-    // Create the note directory
-    await fs.mkdir(noteDir, { recursive: true });
 
     const data = {
       title: title,
@@ -863,7 +1214,7 @@ app.post('/api/notes/import', async (req, res) => {
       updatedAt: new Date().toISOString()
     };
 
-    await fs.writeFile(notePath, JSON.stringify(data, null, 2));
+    await writeNoteData(userId, noteId, data);
     res.json({ success: true, noteId, path: noteId });
   } catch (error) {
     console.error('Error importing note:', error);
@@ -875,13 +1226,10 @@ app.post('/api/notes/import', async (req, res) => {
 app.get('/api/notes/export', async (req, res) => {
   try {
     const userId = req.session.userId;
-    const userDir = path.join(DATA_DIR, userId);
+    const database = await loadUserDatabase(userId);
 
-    // Check if user directory exists
-    try {
-      await fs.access(userDir);
-    } catch {
-      // No notes to export
+    // Check if user has any notes
+    if (Object.keys(database.notes).length === 0) {
       return res.status(404).json({ success: false, error: 'No notes found' });
     }
 
@@ -895,27 +1243,26 @@ app.get('/api/notes/export', async (req, res) => {
     // Pipe archive to response
     archive.pipe(res);
 
-    // Get all note directories
-    const entries = await fs.readdir(userDir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const noteId = entry.name;
-        const notePath = getNotePath(userId, noteId);
-
+    // Export all notes from database
+    for (const [noteId, metadata] of Object.entries(database.notes)) {
+      try {
+        // Read markdown file
+        const notePath = getNoteFilePath(userId, noteId);
+        let markdown = '';
         try {
-          const noteContent = await fs.readFile(notePath, 'utf-8');
-          const noteData = JSON.parse(noteContent);
-
-          // Create a safe filename from the title
-          const safeTitle = noteData.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-          const filename = `${safeTitle}.md`;
-
-          // Add markdown content to archive
-          archive.append(noteData.markdown, { name: filename });
-        } catch (err) {
-          console.error(`Error reading note ${noteId}:`, err);
+          markdown = await fs.readFile(notePath, 'utf-8');
+        } catch (e) {
+          // File might not exist
         }
+
+        // Create a safe filename from the title
+        const safeTitle = metadata.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const filename = `${safeTitle}.md`;
+
+        // Add markdown content to archive
+        archive.append(markdown, { name: filename });
+      } catch (err) {
+        console.error(`Error reading note ${noteId}:`, err);
       }
     }
 
@@ -932,10 +1279,27 @@ app.delete('/api/file/:noteId', async (req, res) => {
   try {
     const userId = req.session.userId;
     const noteId = req.params.noteId;
-    const noteDir = getNoteDir(userId, noteId);
 
-    // Delete entire note directory (includes media files)
-    await fs.rm(noteDir, { recursive: true });
+    // Delete from database
+    const database = await loadUserDatabase(userId);
+    delete database.notes[noteId];
+    await saveUserDatabase(userId, database);
+
+    // Delete markdown file
+    const notePath = getNoteFilePath(userId, noteId);
+    try {
+      await fs.unlink(notePath);
+    } catch (e) {
+      // File might not exist
+    }
+
+    // Delete media directory
+    const mediaDir = getNoteMediaDir(userId, noteId);
+    try {
+      await fs.rm(mediaDir, { recursive: true, force: true });
+    } catch (e) {
+      // Directory might not exist
+    }
 
     res.json({ success: true });
   } catch (error) {
@@ -955,14 +1319,12 @@ app.get('/api/shared/:shareId', async (req, res) => {
     const { password } = req.query;
 
     // Get shared file metadata
-    const sharedPath = path.join(SHARED_DIR, shareId + '.json');
+    const sharedPath = path.join(SHARED_DIR, path.basename(shareId) + '.json');
     const sharedContent = await fs.readFile(sharedPath, 'utf-8');
     const sharedData = JSON.parse(sharedContent);
 
     // Get actual note file
-    const notePath = getNotePath(sharedData.userId, sharedData.noteId);
-    const content = await fs.readFile(notePath, 'utf-8');
-    const fileData = JSON.parse(content);
+    const fileData = await readNoteData(sharedData.userId, sharedData.noteId);
 
     // Check password if protected
     if (fileData.isPasswordProtected && fileData.password) {
@@ -1007,43 +1369,45 @@ app.get('/api/search', async (req, res) => {
     const { q } = req.query;
     const userDir = await ensureUserDir(userId);
 
-    const results = await searchFiles(userDir, userDir, q.toLowerCase());
+    const results = await searchNotes(userId, q.toLowerCase());
     res.json({ success: true, results });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Search through files
-async function searchFiles(dir, baseDir, query) {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
+// Search through notes
+async function searchNotes(userId, query) {
+  const database = await loadUserDatabase(userId);
   const results = [];
 
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    const relativePath = path.relative(baseDir, fullPath);
+  for (const [noteId, metadata] of Object.entries(database.notes)) {
+    try {
+      // Read markdown file
+      const notePath = getNoteFilePath(userId, noteId);
+      let markdown = '';
+      try {
+        markdown = await fs.readFile(notePath, 'utf-8');
+      } catch (e) {
+        // File might not exist
+      }
 
-    if (entry.isDirectory()) {
-      const subResults = await searchFiles(fullPath, baseDir, query);
-      results.push(...subResults);
-    } else if (entry.name.endsWith('.json')) {
-      const content = await fs.readFile(fullPath, 'utf-8');
-      const data = JSON.parse(content);
-
-      const tagsMatch = data.tags && data.tags.some(tag =>
+      const tagsMatch = metadata.tags && metadata.tags.some(tag =>
         tag.toLowerCase().includes(query)
       );
 
-      if (data.title.toLowerCase().includes(query) ||
-          data.markdown.toLowerCase().includes(query) ||
+      if (metadata.title.toLowerCase().includes(query) ||
+          (markdown && markdown.toLowerCase().includes(query)) ||
           tagsMatch) {
         results.push({
-          name: data.title,
-          path: relativePath,
-          preview: data.markdown.substring(0, 100),
-          tags: data.tags || []
+          name: metadata.title,
+          path: noteId,
+          preview: markdown ? markdown.substring(0, 100) : '',
+          tags: metadata.tags || []
         });
       }
+    } catch (e) {
+      // Skip if not a valid note
     }
   }
 
