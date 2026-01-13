@@ -14,6 +14,7 @@ let privacyMode = false;
 
 // Context menu state
 let contextMenuTarget = null;
+let tagTarget = null;
 
 // Global fetch wrapper to handle session expiration
 const originalFetch = window.fetch;
@@ -647,11 +648,16 @@ async function moveFileToFolder() {
 function manageTagsForFile() {
   if (!contextMenuTarget) return;
 
+  tagTarget = contextMenuTarget;
   openModal('tag-modal');
   hideContextMenu();
 
   // Load current tags
-  loadTagsForModal(contextMenuTarget.path);
+  loadTagsForModal(tagTarget.path);
+
+  // Focus input
+  const input = document.getElementById('tag-input');
+  if (input) setTimeout(() => input.focus(), 100);
 }
 
 async function loadTagsForModal(filePath) {
@@ -698,13 +704,13 @@ function addTag() {
 }
 
 async function saveTags() {
-  if (!contextMenuTarget) return;
+  if (!tagTarget) return;
 
   const tagElements = document.querySelectorAll('#tags-container .tag-item span:first-child');
   const tags = Array.from(tagElements).map(el => el.textContent);
 
   try {
-    const response = await fetch(`/api/file/metadata/${contextMenuTarget.path}`, {
+    const response = await fetch(`/api/file/metadata/${tagTarget.path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tags })
@@ -712,7 +718,7 @@ async function saveTags() {
 
     const data = await response.json();
     if (data.success) {
-      if (currentFilePath === contextMenuTarget.path) {
+      if (currentFilePath === tagTarget.path) {
         currentFileTags = tags;
       }
       await loadFiles();
@@ -1305,6 +1311,16 @@ document.getElementById('document-title').addEventListener('input', () => {
     }
   }, 1000);
 });
+
+const tagInput = document.getElementById('tag-input');
+if (tagInput) {
+  tagInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addTag();
+    }
+  });
+}
 
 // Save on Ctrl+S
 document.addEventListener('keydown', (e) => {

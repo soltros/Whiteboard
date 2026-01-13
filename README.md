@@ -349,7 +349,6 @@ Currently, no automated tests are included. Future versions will include:
 
 ## License
 
-GPLv3
 
 ## Contributing
 
