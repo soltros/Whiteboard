@@ -1,6 +1,6 @@
 # ![Whiteboard Logo](public/favicon.svg) Whiteboard 
 
-A clean, privacy-focused note-taking application with markdown support, rich text editing, and complete data sovereignty. Your notes are stored as simple markdown files that you own and control.
+A clean, privacy-focused, self-hosted note-taking application with markdown support, rich text editing, and complete data sovereignty. Your notes are stored as simple markdown files that you own and control.
 
 ![Whiteboard Grid View](screenshots/2.png)
 
