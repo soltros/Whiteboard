@@ -2,6 +2,8 @@
 
 A clean, privacy-focused note-taking application with markdown support, rich text editing, and complete data sovereignty. Your notes are stored as simple markdown files that you own and control.
 
+![Whiteboard Grid View](screenshots/2.png)
+
 ## Philosophy
 
 Whiteboard is built on the principle that your notes should belong to you. No subscriptions, no cloud lock-in, no tracking. Just a simple, powerful tool that respects your data and your privacy.
@@ -24,6 +26,12 @@ Whiteboard is built on the principle that your notes should belong to you. No su
 - **Collage View**: Visual grid of note cards with previews
 - **Grouped View**: Notes organized by their assigned groups
 
+![List View](screenshots/3.png)
+*List view showing notes with tags and metadata*
+
+![Tag Cloud](screenshots/5.png)
+*Tag cloud for quick filtering by tags*
+
 ### Sharing & Security
 - **Shareable Links**: Generate public links for individual notes
 - **Password Protection**: Optional password protection for notes
@@ -44,6 +52,9 @@ Whiteboard is built on the principle that your notes should belong to you. No su
 - **Role-Based Access**: Admin and regular user roles
 - **Password Management**: Users can change their own passwords
 - **Isolated Storage**: Each user's notes stored separately
+
+![Admin Panel](screenshots/1.png)
+*Admin panel for managing users, settings, and backups*
 
 ### Mobile & Responsive
 - **Mobile-First Design**: Fully responsive interface for all screen sizes
@@ -171,6 +182,9 @@ After logging in as admin:
 3. Start writing in the editor
 4. The title can be edited in the footer while viewing the note
 5. Changes auto-save after 1 second
+
+![Create New Note](screenshots/4.png)
+*Creating a new note with a custom name*
 
 ### Organizing with Tags and Groups
 

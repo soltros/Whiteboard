@@ -1122,6 +1122,181 @@ async function shareFile() {
   }
 }
 
+// Export note as Markdown
+async function exportNoteAsMarkdown() {
+  if (!contextMenuTarget) {
+    console.error('No context menu target');
+    return;
+  }
+
+  const targetPath = contextMenuTarget.path;
+  const targetName = contextMenuTarget.name || 'note';
+  hideContextMenu();
+
+  try {
+    updateStatus('Exporting markdown...');
+    const response = await fetch(`/api/file/${targetPath}`);
+    const data = await response.json();
+
+    if (data.success) {
+      // Create a blob with the markdown content
+      const blob = new Blob([data.data.markdown || ''], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+
+      // Create download link
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${targetName}.md`;
+      document.body.appendChild(a);
+      a.click();
+
+      // Cleanup
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      updateStatus('Markdown exported');
+    } else {
+      updateStatus('Error exporting markdown');
+    }
+  } catch (error) {
+    console.error('Error exporting markdown:', error);
+    updateStatus('Error exporting markdown');
+  }
+}
+
+// Export note as PDF
+async function exportNoteAsPDF() {
+  if (!contextMenuTarget) {
+    console.error('No context menu target');
+    return;
+  }
+
+  const targetPath = contextMenuTarget.path;
+  const targetName = contextMenuTarget.name || 'note';
+  hideContextMenu();
+
+  try {
+    updateStatus('Exporting PDF...');
+    const response = await fetch(`/api/file/${targetPath}`);
+    const data = await response.json();
+
+    if (data.success) {
+      const markdown = data.data.markdown || '';
+
+      // Convert markdown to HTML using a simple converter
+      const html = markdownToHTML(markdown, targetName);
+
+      // Create a new window for printing
+      const printWindow = window.open('', '_blank');
+      printWindow.document.write(html);
+      printWindow.document.close();
+
+      // Wait for content to load, then print
+      setTimeout(() => {
+        printWindow.print();
+        updateStatus('PDF export dialog opened');
+      }, 500);
+    } else {
+      updateStatus('Error exporting PDF');
+    }
+  } catch (error) {
+    console.error('Error exporting PDF:', error);
+    updateStatus('Error exporting PDF');
+  }
+}
+
+// Simple markdown to HTML converter for PDF export
+function markdownToHTML(markdown, title) {
+  let html = markdown
+    // Headers
+    .replace(/^######\s+(.+)$/gm, '<h6>$1</h6>')
+    .replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>')
+    .replace(/^####\s+(.+)$/gm, '<h4>$1</h4>')
+    .replace(/^###\s+(.+)$/gm, '<h3>$1</h3>')
+    .replace(/^##\s+(.+)$/gm, '<h2>$1</h2>')
+    .replace(/^#\s+(.+)$/gm, '<h1>$1</h1>')
+    // Bold
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/__(.+?)__/g, '<strong>$1</strong>')
+    // Italic
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/_(.+?)_/g, '<em>$1</em>')
+    // Code blocks
+    .replace(/```([^`]+)```/g, '<pre><code>$1</code></pre>')
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // Links
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    // Line breaks
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>');
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>${title}</title>
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+          line-height: 1.6;
+          max-width: 800px;
+          margin: 40px auto;
+          padding: 20px;
+          color: #333;
+        }
+        h1, h2, h3, h4, h5, h6 {
+          margin-top: 24px;
+          margin-bottom: 16px;
+          font-weight: 600;
+          line-height: 1.25;
+        }
+        h1 { font-size: 2em; border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+        h2 { font-size: 1.5em; border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+        h3 { font-size: 1.25em; }
+        code {
+          background: #f6f8fa;
+          padding: 2px 6px;
+          border-radius: 3px;
+          font-family: 'Courier New', monospace;
+          font-size: 0.9em;
+        }
+        pre {
+          background: #f6f8fa;
+          padding: 16px;
+          border-radius: 6px;
+          overflow-x: auto;
+        }
+        pre code {
+          background: none;
+          padding: 0;
+        }
+        a {
+          color: #0366d6;
+          text-decoration: none;
+        }
+        a:hover {
+          text-decoration: underline;
+        }
+        p {
+          margin-bottom: 16px;
+        }
+        @media print {
+          body {
+            margin: 0;
+            padding: 20px;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <p>${html}</p>
+    </body>
+    </html>
+  `;
+}
+
 function copyShareLink() {
   const input = document.getElementById('share-link-input');
   input.select();
