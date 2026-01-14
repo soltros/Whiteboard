@@ -88,8 +88,6 @@ Default credentials:
 - Username: `admin`
 - Password: `admin123`
 
-See [DOCKER.md](DOCKER.md) for detailed Docker deployment instructions, including environment variables, volume management, and reverse proxy configuration.
-
 ### Local Development
 
 For development purposes only:
@@ -340,8 +338,6 @@ data/
 
 Pure markdown content here...
 ```
-
-For migration from older versions, see [MIGRATION.md](MIGRATION.md).
 
 ## API Endpoints
 
