@@ -118,6 +118,43 @@ PORT=2452
 TZ=America/New_York
 ```
 
+#### Generating a Secure Session Secret
+
+The `SESSION_SECRET` is used to encrypt user session cookies. It must be a long, random string that is impossible to guess.
+
+**Option 1: Using OpenSSL (Linux/Mac)**
+```bash
+openssl rand -base64 32
+```
+
+**Option 2: Using Node.js**
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+**Option 3: Using Python**
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+**Option 4: Online Generator**
+Visit https://www.random.org/strings/ and generate a random string with:
+- Length: 32 characters
+- Character set: Alphanumeric + symbols
+
+**Example `.env` file:**
+```env
+SESSION_SECRET=K7x9mP2nQ5wR8tY3uI6oA1sD4fG7hJ0k
+PORT=2452
+TZ=America/New_York
+```
+
+**Important:**
+- Never share your SESSION_SECRET with anyone
+- Never commit it to version control (the .env file is already in .gitignore)
+- Use a different secret for each deployment (development, staging, production)
+- If compromised, generate a new secret immediately (all users will need to log in again)
+
 ### Application Settings
 
 After logging in as admin:
@@ -211,6 +248,10 @@ Whiteboard/
 ├── docker-compose.yml     # Docker Compose configuration
 ├── migrate-to-database.js # Migration script for database architecture
 ├── MIGRATION.md           # Migration documentation
+├── DOCKER.md              # Docker deployment guide
+├── linux-app.md           # Native Linux app documentation
+├── android-app.md         # Native Android app documentation
+├── vscode-setup.md        # VSCode development setup guide
 ├── public/                # Frontend static files
 │   ├── index.html         # Main application page
 │   ├── app.js             # Frontend JavaScript (Toast UI Editor)
@@ -466,7 +507,9 @@ If port 2452 is already in use:
 
 ## License
 
-ISC License
+GPLv3 License
+
+Whiteboard is free and open-source software licensed under the GNU General Public License v3.0. This ensures that the software remains free forever, anyone can study and modify the code, and all modifications must also be open source under GPLv3.
 
 ## Contributing
 
@@ -479,6 +522,45 @@ Contributions are welcome. Please:
 ## Support
 
 For issues, questions, or feature requests, please open an issue on the project repository.
+
+## Wishlist Features
+
+These are planned features for future releases. Community contributions welcome!
+
+### Collaborative Notes
+- Share notes with other users on the same server for real-time collaboration
+- Shared notes appear in a "Shared Notes" group for all collaborators
+- Both users can edit the note simultaneously with conflict resolution
+- Changes sync automatically between collaborators
+- Permission levels: view-only, edit, or owner
+
+### Dark Mode
+- Full dark theme for the entire interface
+- Toggle between light and dark mode in settings
+- Respects system theme preferences
+- Separate dark mode styling for editor, collage view, and admin panel
+- Reduced eye strain for night-time note-taking
+
+### Web Clipping
+- Browser extension for clipping web pages directly into notes
+- Save entire articles or selected text with formatting preserved
+- Automatic metadata extraction (title, URL, date)
+- Convert web pages to clean markdown
+- Batch clip multiple pages into a single note or separate notes
+
+### Other Potential Features
+- Real-time collaborative editing with cursor presence
+- Note version history and rollback
+- Nested folders for better organization
+- Note templates for common formats
+- Quick capture widget for desktop
+- Mobile apps (Android and iOS) with offline sync
+- Two-factor authentication for enhanced security
+- API webhooks for integrations
+- Markdown table editor with GUI
+- Diagram support (Mermaid, PlantUML)
+
+**Want to help?** These features are open for community implementation. Check the issues page or submit a proposal!
 
 ## Changelog
 
