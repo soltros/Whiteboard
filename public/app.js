@@ -20,6 +20,10 @@ let allFiles = [];
 let contextMenuTarget = null;
 let tagTarget = null;
 
+// Multi-select state
+let selectedNotes = new Set();
+let isMultiSelectMode = false;
+
 // Global fetch wrapper to handle session expiration
 const originalFetch = window.fetch;
 window.fetch = async function(...args) {
@@ -730,16 +734,47 @@ function createNoteCard(note) {
     ` : ''}
   `;
 
-  card.addEventListener('click', () => {
-    openFile(note.path);
+  card.addEventListener('click', (e) => {
+    if (isMultiSelectMode) {
+      // Multi-select mode: toggle selection
+      e.preventDefault();
+      e.stopPropagation();
+      toggleNoteSelection(note, card);
+    } else {
+      // Normal mode: open the file
+      openFile(note.path);
+    }
   });
 
   card.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+
+    // If right-clicking on an unselected note while others are selected,
+    // clear the selection and use this note
+    if (selectedNotes.size > 0 && !selectedNotes.has(note.path)) {
+      clearSelection();
+    }
+
+    // If no notes are selected, this becomes the target
+    if (selectedNotes.size === 0) {
+      contextMenuTarget = note;
+    }
+
     showContextMenu(e, note);
   });
 
   return card;
+}
+
+// Toggle note selection
+function toggleNoteSelection(note, cardElement) {
+  if (selectedNotes.has(note.path)) {
+    selectedNotes.delete(note.path);
+    cardElement.classList.remove('selected');
+  } else {
+    selectedNotes.add(note.path);
+    cardElement.classList.add('selected');
+  }
 }
 
 // Save current file
@@ -934,14 +969,20 @@ async function moveFileToFolder() {
 
 // Manage tags
 function manageTagsForFile() {
-  if (!contextMenuTarget) return;
-
-  tagTarget = contextMenuTarget;
-  openModal('tag-modal');
   hideContextMenu();
 
-  // Load current tags
-  loadTagsForModal(tagTarget.path);
+  if (selectedNotes.size > 0) {
+    // Multi-select mode: show simplified tag modal for multiple notes
+    openModal('tag-modal');
+    const tagsContainer = document.getElementById('tags-container');
+    tagsContainer.innerHTML = '<p style="color: var(--text-secondary); margin-bottom: 12px;">Managing tags for ' + selectedNotes.size + ' notes. Add tags to apply to all selected notes.</p>';
+    tagTarget = null; // Indicate multi-select mode
+  } else if (contextMenuTarget) {
+    // Single note mode
+    tagTarget = contextMenuTarget;
+    openModal('tag-modal');
+    loadTagsForModal(tagTarget.path);
+  }
 
   // Focus input
   const input = document.getElementById('tag-input');
@@ -992,27 +1033,52 @@ function addTag() {
 }
 
 async function saveTags() {
-  if (!tagTarget) return;
-
   const tagElements = document.querySelectorAll('#tags-container .tag-item span:first-child');
   const tags = Array.from(tagElements).map(el => el.textContent);
 
   try {
-    const response = await fetch(`/api/file/metadata/${tagTarget.path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tags })
-    });
+    if (selectedNotes.size > 0) {
+      // Multi-select: add tags to all selected notes
+      const notesToTag = allFiles.filter(file => selectedNotes.has(file.path));
+      for (const note of notesToTag) {
+        // Get current note data
+        const response = await fetch(`/api/file/${note.path}`);
+        const data = await response.json();
 
-    const data = await response.json();
-    if (data.success) {
-      if (currentFilePath === tagTarget.path) {
-        currentFileTags = tags;
+        if (data.success) {
+          const fileData = data.data;
+          const currentTags = fileData.tags || [];
+          // Merge tags (add new ones, keep existing ones)
+          const mergedTags = [...new Set([...currentTags, ...tags])];
+
+          await fetch(`/api/file/metadata/${note.path}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tags: mergedTags })
+          });
+        }
       }
-      await loadFiles();
-      closeModal('tag-modal');
-      updateStatus('Tags updated');
+      updateStatus(`Tags added to ${selectedNotes.size} notes`);
+      clearSelection();
+    } else if (tagTarget) {
+      // Single note mode
+      const response = await fetch(`/api/file/metadata/${tagTarget.path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        if (currentFilePath === tagTarget.path) {
+          currentFileTags = tags;
+        }
+        updateStatus('Tags updated');
+      }
     }
+
+    await loadFiles();
+    closeModal('tag-modal');
   } catch (error) {
     console.error('Error updating tags:', error);
   }
@@ -1058,22 +1124,38 @@ async function savePassword() {
   }
 }
 
-// Create new group and add file to it
+// Create new group and add file(s) to it
 async function createNewGroup() {
-  if (!contextMenuTarget) return;
-
   const groupName = await showPrompt('New Group', 'Enter new group name:');
   if (!groupName || groupName.trim() === '') return;
 
-  await addToGroup(contextMenuTarget, groupName.trim());
+  if (selectedNotes.size > 0) {
+    // Multi-select: add all selected notes to new group
+    const notesToAdd = allFiles.filter(file => selectedNotes.has(file.path));
+    for (const note of notesToAdd) {
+      await addToGroup(note, groupName.trim());
+    }
+    clearSelection();
+  } else if (contextMenuTarget) {
+    // Single note: add to new group
+    await addToGroup(contextMenuTarget, groupName.trim());
+  }
   hideContextMenu();
 }
 
-// Add file to an existing group
+// Add file(s) to an existing group
 async function addToExistingGroup(groupName) {
-  if (!contextMenuTarget) return;
-
-  await addToGroup(contextMenuTarget, groupName);
+  if (selectedNotes.size > 0) {
+    // Multi-select: add all selected notes to group
+    const notesToAdd = allFiles.filter(file => selectedNotes.has(file.path));
+    for (const note of notesToAdd) {
+      await addToGroup(note, groupName);
+    }
+    clearSelection();
+  } else if (contextMenuTarget) {
+    // Single note: add to group
+    await addToGroup(contextMenuTarget, groupName);
+  }
   hideContextMenu();
 }
 
@@ -2255,6 +2337,34 @@ document.querySelectorAll('.modal').forEach(modal => {
     }
   });
 });
+
+// Track Ctrl/Cmd key for multi-select
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    isMultiSelectMode = true;
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  if (!e.ctrlKey && !e.metaKey) {
+    isMultiSelectMode = false;
+  }
+});
+
+// Clear selection when clicking outside notes
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.collage-card') && !isMultiSelectMode) {
+    clearSelection();
+  }
+});
+
+// Clear selection helper
+function clearSelection() {
+  selectedNotes.clear();
+  document.querySelectorAll('.collage-card.selected').forEach(card => {
+    card.classList.remove('selected');
+  });
+}
 
 // Initialize - check auth first, then load editor
 checkAuth().then(async isAuthenticated => {
