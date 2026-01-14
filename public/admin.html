@@ -39,9 +39,20 @@
 
         <div style="padding: 20px 30px;">
           <div class="form-group">
-            <label>Export All Data</label>
+            <label>🔒 Backup All Databases (Recommended)</label>
             <p style="color: #666; font-size: 14px; margin-bottom: 10px;">
-              Download a complete backup of all users, passwords, notes, and databases.
+              Download a ZIP backup of all database files, user accounts, settings, and shared links metadata. Fast and lightweight.
+            </p>
+            <button id="backup-databases-btn" class="btn-primary" style="background: #28a745; font-weight: 600;">
+              <span style="font-size: 16px;">💾</span> Backup Databases
+            </button>
+            <div id="last-backup-info" style="margin-top: 10px; font-size: 13px; color: #666;"></div>
+          </div>
+
+          <div class="form-group" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+            <label>Export All Data (Complete Backup)</label>
+            <p style="color: #666; font-size: 14px; margin-bottom: 10px;">
+              Download a complete JSON backup of all users, passwords, notes content, and databases. Larger file size.
             </p>
             <button id="export-all-btn" class="btn-primary">Export All Data</button>
           </div>

@@ -280,7 +280,21 @@ document.getElementById('edit-user-form').addEventListener('submit', async (e) =
 
 // Delete user
 async function deleteUser(username) {
-  if (!confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
+  const confirmMessage = `⚠️ WARNING: Delete user "${username}"?\n\n` +
+    `This will PERMANENTLY DELETE:\n` +
+    `• All notes and markdown files\n` +
+    `• All uploaded images and media\n` +
+    `• All shared links\n` +
+    `• User account and settings\n\n` +
+    `This action CANNOT be undone!\n\n` +
+    `Type the username "${username}" to confirm:`;
+
+  const confirmation = prompt(confirmMessage);
+
+  if (confirmation !== username) {
+    if (confirmation !== null) {
+      alert('Username did not match. Deletion cancelled.');
+    }
     return;
   }
 
@@ -292,6 +306,7 @@ async function deleteUser(username) {
     const data = await response.json();
 
     if (data.success) {
+      alert(data.message || `User "${username}" and all their data has been permanently deleted.`);
       await loadUsers();
     } else {
       alert(data.error || 'Failed to delete user');
@@ -321,6 +336,58 @@ document.getElementById('new-user-btn').addEventListener('click', openNewUserMod
 
 // Settings button
 document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
+
+// Backup databases button
+document.getElementById('backup-databases-btn').addEventListener('click', async () => {
+  try {
+    const button = document.getElementById('backup-databases-btn');
+    const originalHTML = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<span style="font-size: 16px;">⏳</span> Creating backup...';
+
+    const response = await fetch('/api/admin/backup-databases');
+
+    if (!response.ok) {
+      const data = await response.json();
+      alert(data.error || 'Failed to create backup');
+      return;
+    }
+
+    // Download the file
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+
+    // Get filename from Content-Disposition header
+    const contentDisposition = response.headers.get('Content-Disposition');
+    const filenameMatch = contentDisposition && contentDisposition.match(/filename="?(.+)"?/);
+    const filename = filenameMatch ? filenameMatch[1] : `whiteboard-databases-backup-${Date.now()}.zip`;
+
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+
+    // Update last backup time
+    const now = new Date();
+    localStorage.setItem('lastBackupTime', now.toISOString());
+    updateLastBackupInfo();
+
+    button.innerHTML = '<span style="font-size: 16px;">✅</span> Backup Complete!';
+    setTimeout(() => {
+      button.innerHTML = originalHTML;
+      button.disabled = false;
+    }, 2000);
+  } catch (error) {
+    console.error('Error creating backup:', error);
+    alert('Failed to create backup. Please try again.');
+    const button = document.getElementById('backup-databases-btn');
+    button.innerHTML = '<span style="font-size: 16px;">💾</span> Backup Databases';
+    button.disabled = false;
+  }
+});
 
 // Export all data
 document.getElementById('export-all-btn').addEventListener('click', async () => {

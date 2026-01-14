@@ -613,7 +613,7 @@ function renderCollageView(files) {
     card.className = 'collage-card';
     card.dataset.path = note.path;
     card.innerHTML = `
-      <div class="collage-card-title">${escapeHtml(note.name)}</div>
+      <div class="collage-card-title">${escapeHtml(note.name)} ${note.isPasswordProtected ? '🔒' : ''}</div>
       ${!privacyMode ? `<div class="collage-card-preview">${escapeHtml(preview)}</div>` : ''}
       <div class="collage-card-meta">
         <div class="collage-card-tags">
@@ -623,14 +623,34 @@ function renderCollageView(files) {
       </div>
     `;
 
-    // Add click event to open file
-    card.addEventListener('click', () => {
-      openFile(note.path);
+    // Add click event to open file or toggle selection
+    card.addEventListener('click', (e) => {
+      if (isMultiSelectMode) {
+        // Multi-select mode: toggle selection
+        e.preventDefault();
+        e.stopPropagation();
+        toggleNoteSelection(note, card);
+      } else {
+        // Normal mode: open the file
+        openFile(note.path);
+      }
     });
 
     // Add context menu event
     card.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+
+      // If right-clicking on an unselected note while others are selected,
+      // clear the selection and use this note
+      if (selectedNotes.size > 0 && !selectedNotes.has(note.path)) {
+        clearSelection();
+      }
+
+      // If no notes are selected, this becomes the target
+      if (selectedNotes.size === 0) {
+        contextMenuTarget = note;
+      }
+
       showContextMenu(e, note);
     });
 
@@ -723,7 +743,7 @@ function createNoteCard(note) {
   card.className = 'collage-card';
   card.innerHTML = `
     <div class="collage-card-header">
-      <h3 class="collage-card-title">${escapeHtml(note.title)}</h3>
+      <h3 class="collage-card-title">${escapeHtml(note.title)} ${note.isPasswordProtected ? '🔒' : ''}</h3>
       <span class="collage-card-date">${date}</span>
     </div>
     ${!privacyMode ? `<div class="collage-card-preview">${escapeHtml(preview)}</div>` : ''}
@@ -925,7 +945,7 @@ async function deleteFile() {
         }
       }
 
-      await loadFiles();
+      await refreshCurrentView();
       updateStatus('Deleted successfully');
     }
   } catch (error) {
@@ -956,7 +976,7 @@ async function moveFileToFolder() {
       if (currentFilePath === contextMenuTarget.path) {
         currentFilePath = data.newPath;
       }
-      await loadFiles();
+      await refreshCurrentView();
       updateStatus('Moved successfully');
     }
   } catch (error) {
@@ -1077,7 +1097,7 @@ async function saveTags() {
       }
     }
 
-    await loadFiles();
+    await refreshCurrentView();
     closeModal('tag-modal');
   } catch (error) {
     console.error('Error updating tags:', error);
@@ -1087,6 +1107,11 @@ async function saveTags() {
 // Password protect file
 function setPasswordForFile() {
   if (!contextMenuTarget) return;
+
+  // Pre-populate the form with current password protection status
+  const isProtected = contextMenuTarget.isPasswordProtected || false;
+  document.getElementById('enable-password').checked = isProtected;
+  document.getElementById('note-password').value = ''; // Clear password field
 
   openModal('password-modal');
   hideContextMenu();
@@ -1115,9 +1140,11 @@ async function savePassword() {
 
     const data = await response.json();
     if (data.success) {
-      await loadFiles();
+      await refreshCurrentView();
       closeModal('password-modal');
       updateStatus('Password updated');
+    } else {
+      await showAlert('Error', data.error || 'Failed to update password protection.');
     }
   } catch (error) {
     console.error('Error updating password:', error);
@@ -1196,7 +1223,7 @@ async function addToGroup(file, groupName) {
       const saveData = await saveResponse.json();
       if (saveData.success) {
         updateStatus(`Added to group: ${groupName}`);
-        await loadFiles(); // Reload to show updated grouping
+        await refreshCurrentView(); // Refresh current view (search results or all files)
       }
     }
   } catch (error) {
@@ -1238,7 +1265,7 @@ async function removeFromGroup(groupName) {
       const saveData = await saveResponse.json();
       if (saveData.success) {
         updateStatus(`Removed from group: ${groupName}`);
-        await loadFiles(); // Reload to show updated grouping
+        await refreshCurrentView(); // Refresh current view (search results or all files)
       }
     }
   } catch (error) {
@@ -1679,6 +1706,61 @@ function injectViewStyles() {
       padding: 0 10px;
     }
 
+    /* Apply list view styles to group-grid when parent has list-view */
+    .collage-grid.list-view .group-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .collage-grid.list-view .group-grid .collage-card {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      width: 100%;
+      padding: 15px;
+      height: auto;
+      min-height: 0;
+    }
+    .collage-grid.list-view .group-grid .collage-card-header {
+      display: flex;
+      align-items: center;
+      flex: 0 0 25%;
+      padding-right: 15px;
+    }
+    .collage-grid.list-view .group-grid .collage-card-title {
+      flex: 1;
+      margin-bottom: 0;
+      font-size: 16px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-right: 10px;
+    }
+    .collage-grid.list-view .group-grid .collage-card-date {
+      flex-shrink: 0;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+    .collage-grid.list-view .group-grid .collage-card-preview {
+      flex: 1;
+      margin: 0;
+      height: auto;
+      -webkit-line-clamp: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #666;
+      font-size: 14px;
+      padding-right: 15px;
+    }
+    .collage-grid.list-view .group-grid .collage-card-tags {
+      flex: 0 0 auto;
+      margin-left: auto;
+      display: flex;
+      gap: 5px;
+      margin-top: 0;
+    }
+
     /* Context Menu Submenu */
     .context-menu-parent {
       position: relative;
@@ -1708,8 +1790,12 @@ function injectViewStyles() {
 
 // Search files
 let searchTimeout = null;
+let currentSearchQuery = ''; // Track current search query
 async function searchFiles(query) {
+  currentSearchQuery = query; // Store the current search query
+
   if (!query) {
+    currentSearchQuery = ''; // Clear search query when empty
     loadFiles();
     return;
   }
@@ -1727,6 +1813,17 @@ async function searchFiles(query) {
   } catch (error) {
     console.error('Error searching:', error);
     updateStatus('Error during search');
+  }
+}
+
+// Refresh current view (either search results or all files)
+async function refreshCurrentView() {
+  if (currentSearchQuery) {
+    // Re-run the current search
+    await searchFiles(currentSearchQuery);
+  } else {
+    // Reload all files
+    await loadFiles();
   }
 }
 
@@ -1960,7 +2057,7 @@ async function deleteGroup(groupName) {
     }
 
     updateStatus('Group deleted');
-    await loadFiles(); // Reload files to update the groups
+    await refreshCurrentView(); // Refresh current view to update the groups
     await renderGroupsList(); // Re-render the groups list
   } catch (error) {
     console.error('Error deleting group:', error);

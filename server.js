@@ -1374,7 +1374,36 @@ app.put('/api/admin/users/:username', requireAdmin, async (req, res) => {
   }
 });
 
-// Delete user (admin only)
+// Helper function to recursively delete a directory
+async function deleteDirectory(dirPath) {
+  try {
+    const stat = await fs.stat(dirPath);
+    if (!stat.isDirectory()) {
+      await fs.unlink(dirPath);
+      return;
+    }
+
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        await deleteDirectory(fullPath);
+      } else {
+        await fs.unlink(fullPath);
+      }
+    }
+
+    await fs.rmdir(dirPath);
+  } catch (error) {
+    // Ignore errors if directory doesn't exist
+    if (error.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+}
+
+// Delete user and scrub all their data (admin only)
 app.delete('/api/admin/users/:username', requireAdmin, async (req, res) => {
   try {
     const { username } = req.params;
@@ -1393,11 +1422,51 @@ app.delete('/api/admin/users/:username', requireAdmin, async (req, res) => {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
+    // Clean up user's shared links
+    console.log(`Cleaning up shared links for user: ${username}`);
+    try {
+      const sharedFiles = await fs.readdir(SHARED_DIR);
+      let sharedCount = 0;
+
+      for (const sharedFile of sharedFiles) {
+        if (sharedFile.endsWith('.json')) {
+          const sharedPath = path.join(SHARED_DIR, sharedFile);
+          try {
+            const sharedContent = await fs.readFile(sharedPath, 'utf-8');
+            const sharedData = JSON.parse(sharedContent);
+
+            // Delete if this shared link belongs to the user being deleted
+            if (sharedData.userId === username) {
+              await fs.unlink(sharedPath);
+              sharedCount++;
+            }
+          } catch (error) {
+            console.error(`Error processing shared file ${sharedFile}:`, error.message);
+          }
+        }
+      }
+
+      if (sharedCount > 0) {
+        console.log(`Deleted ${sharedCount} shared link(s) for user ${username}`);
+      }
+    } catch (error) {
+      console.error('Error cleaning up shared links:', error.message);
+      // Continue with deletion even if shared cleanup fails
+    }
+
+    // Delete user data directory
+    const userDataPath = path.join(__dirname, 'data', username);
+    console.log(`Scrubbing user data: ${userDataPath}`);
+    await deleteDirectory(userDataPath);
+
+    // Remove user from users.json
     delete users[username];
     await saveUsers(users);
 
-    res.json({ success: true });
+    console.log(`User ${username} deleted and all data scrubbed successfully`);
+    res.json({ success: true, message: `User ${username} and all their data has been permanently deleted` });
   } catch (error) {
+    console.error('Error deleting user:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -1432,7 +1501,79 @@ app.put('/api/admin/settings', requireAdmin, async (req, res) => {
 
 // BACKUP & RESTORE ROUTES (Admin only)
 
-// Export all data
+// Backup all databases (database.json files only) - Fast backup
+app.get('/api/admin/backup-databases', requireAdmin, async (req, res) => {
+  try {
+    const archiver = require('archiver');
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `whiteboard-databases-backup-${timestamp}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+
+    archive.pipe(res);
+
+    // Add users.json
+    try {
+      const usersPath = USERS_FILE;
+      archive.file(usersPath, { name: 'users.json' });
+    } catch (error) {
+      console.error('Error adding users.json to backup:', error);
+    }
+
+    // Add settings.json
+    try {
+      const settingsPath = SETTINGS_FILE;
+      archive.file(settingsPath, { name: 'settings.json' });
+    } catch (error) {
+      console.error('Error adding settings.json to backup:', error);
+    }
+
+    // Add system users-index.json
+    try {
+      archive.file(USERS_INDEX_FILE, { name: 'data/_system/users-index.json' });
+    } catch (error) {
+      console.error('Error adding users-index.json to backup:', error);
+    }
+
+    // Add all user database.json files
+    const users = await loadUsers();
+    for (const username of Object.keys(users)) {
+      try {
+        const dbPath = getUserDatabasePath(username);
+        const stat = await fs.stat(dbPath);
+        if (stat.isFile()) {
+          archive.file(dbPath, { name: `data/${username}/database.json` });
+        }
+      } catch (error) {
+        console.error(`Error adding database for user ${username}:`, error);
+      }
+    }
+
+    // Add shared links metadata
+    try {
+      const sharedFiles = await fs.readdir(SHARED_DIR);
+      for (const file of sharedFiles) {
+        if (file.endsWith('.json')) {
+          const sharedPath = path.join(SHARED_DIR, file);
+          archive.file(sharedPath, { name: `shared/${file}` });
+        }
+      }
+    } catch (error) {
+      console.error('Error adding shared links to backup:', error);
+    }
+
+    await archive.finalize();
+    console.log(`Database backup created: ${filename}`);
+  } catch (error) {
+    console.error('Error creating database backup:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Export all data (legacy endpoint - exports as JSON)
 app.get('/api/admin/export', requireAdmin, async (req, res) => {
   try {
     const backup = {
@@ -2053,8 +2194,23 @@ app.delete('/api/file/:noteId', async (req, res) => {
     const userId = req.session.userId;
     const noteId = req.params.noteId;
 
-    // Delete from database
+    // Get note metadata before deletion to check for shareId
     const database = await loadUserDatabase(userId);
+    const noteMetadata = database.notes[noteId];
+
+    // Delete shared link metadata if note was shared
+    if (noteMetadata && noteMetadata.shareId) {
+      const sharedPath = path.join(SHARED_DIR, path.basename(noteMetadata.shareId) + '.json');
+      try {
+        await fs.unlink(sharedPath);
+        console.log(`Deleted shared link metadata for note ${noteId}: ${sharedPath}`);
+      } catch (error) {
+        console.error('Error deleting shared metadata:', error.message);
+        // Continue with deletion even if shared file cleanup fails
+      }
+    }
+
+    // Delete from database
     delete database.notes[noteId];
     await saveUserDatabase(userId, database);
 
@@ -2064,6 +2220,7 @@ app.delete('/api/file/:noteId', async (req, res) => {
       await fs.unlink(notePath);
     } catch (e) {
       // File might not exist
+      console.error('Error deleting markdown file:', e.message);
     }
 
     // Delete media directory
@@ -2072,10 +2229,22 @@ app.delete('/api/file/:noteId', async (req, res) => {
       await fs.rm(mediaDir, { recursive: true, force: true });
     } catch (e) {
       // Directory might not exist
+      console.error('Error deleting media directory:', e.message);
     }
 
+    // Clean up legacy format directory if it exists
+    const legacyDir = getLegacyNoteDir(userId, noteId);
+    try {
+      await deleteDirectory(legacyDir);
+      console.log(`Deleted legacy format directory for note ${noteId}`);
+    } catch (e) {
+      // Legacy directory might not exist
+    }
+
+    console.log(`Note ${noteId} deleted successfully for user ${userId}`);
     res.json({ success: true });
   } catch (error) {
+    console.error('Error deleting note:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
