@@ -199,7 +199,7 @@ Your notes are stored as simple Markdown files on your server. You can back them
 Whiteboard focuses on what matters: writing and organizing notes. No AI suggestions, no social features, no unnecessary complexity.
 
 ### Open Source Forever
-Licensed under MIT, Whiteboard will always be free and open. The community can fork, extend, or modify it as needed. No company can ever take it away or make it proprietary.
+Licensed under GPLv3, Whiteboard will always be free and open. The community can fork, extend, or modify it as needed. No company can ever take it away or make it proprietary. Any modifications must also remain open source.
 
 ## Key Features
 
@@ -244,7 +244,7 @@ In a world of subscription fatigue and privacy invasions, we built Whiteboard as
 
 ## Open Source
 
-Whiteboard is MIT licensed and developed openly on GitHub. Contributions welcome!
+Whiteboard is GPLv3 licensed and developed openly on GitHub. Contributions welcome!
 
 - Report bugs and request features
 - Submit pull requests
@@ -609,8 +609,6 @@ Default credentials:
 - Username: \`admin\`
 - Password: \`admin123\`
 
-See DOCKER.md for detailed Docker deployment instructions, including environment variables, volume management, and reverse proxy configuration.
-
 ### Local Development
 
 For development purposes only:
@@ -631,6 +629,27 @@ SESSION_SECRET=your-secure-random-string-here
 PORT=2452
 TZ=America/New_York
 \`\`\`
+
+**Generating a Secure Session Secret:**
+
+The SESSION_SECRET encrypts user session cookies. Generate a random string using one of these methods:
+
+**Linux/Mac (OpenSSL):**
+\`\`\`bash
+openssl rand -base64 32
+\`\`\`
+
+**Node.js:**
+\`\`\`bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+\`\`\`
+
+**Python:**
+\`\`\`bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+\`\`\`
+
+**Important:** Never share your SESSION_SECRET or commit it to version control.
 
 ### Application Settings
 
@@ -785,30 +804,6 @@ Whiteboard uses a per-user database architecture for optimal performance.
 - Safari 14+
 - Mobile browsers (iOS Safari, Chrome Mobile)
 
-## Native Applications
-
-### Android App (Coming Soon)
-
-A native Android application is in development using Kotlin and Jetpack Compose.
-
-**Features:**
-- Native Material Design 3 interface
-- Offline-first with local SQLite storage
-- Background sync with server
-- Native sharing integration
-- Biometric authentication support
-
-### Linux App (Coming Soon)
-
-A native Linux application is in development using Rust and GTK 4.
-
-**Features:**
-- Native GTK 4 interface with libadwaita
-- Desktop integration (notifications, system tray)
-- Flatpak packaging for easy distribution
-- Offline-first with local storage
-- Background sync support
-
 ## Performance
 
 - Auto-save debounced to 1 second
@@ -862,7 +857,13 @@ A native Linux application is in development using Rust and GTK 4.
 
 ## License
 
-ISC License
+GPLv3 License
+
+Whiteboard is free and open-source software licensed under the GNU General Public License v3.0. This ensures that:
+- The software remains free forever
+- Anyone can study, modify, and distribute the code
+- Modifications must also be open source under GPLv3
+- Users have the freedom to run the software for any purpose
 
 ## Contributing
 
