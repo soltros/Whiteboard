@@ -1,4 +1,4 @@
-# Whiteboard ![Whiteboard Logo](public/favicon.svg)
+# ![Whiteboard Logo](public/favicon.svg) Whiteboard 
 
 A clean, privacy-focused note-taking application with markdown support, rich text editing, and complete data sovereignty. Your notes are stored as simple markdown files that you own and control.
 
