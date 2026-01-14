@@ -303,6 +303,9 @@ function showContextMenu(event, item) {
   // Populate groups submenu
   populateGroupsSubmenu();
 
+  // Populate remove from groups submenu
+  populateRemoveGroupsSubmenu();
+
   // Position the menu
   contextMenu.style.left = `${event.clientX}px`;
   contextMenu.style.top = `${event.clientY}px`;
@@ -347,6 +350,38 @@ function populateGroupsSubmenu() {
         </div>
       `;
     });
+  }
+
+  submenu.innerHTML = submenuHTML;
+}
+
+// Populate the remove from groups submenu with note's current groups
+function populateRemoveGroupsSubmenu() {
+  const submenu = document.getElementById('remove-groups-submenu');
+  if (!submenu) return;
+
+  // Get the current note's groups
+  const noteGroups = contextMenuTarget?.groups || [];
+
+  let submenuHTML = '';
+
+  if (noteGroups.length > 0) {
+    noteGroups.forEach(group => {
+      submenuHTML += `
+        <div class="context-menu-item" onclick="removeFromGroup('${escapeHtml(group)}'); event.stopPropagation();">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+          </svg>
+          ${escapeHtml(group)}
+        </div>
+      `;
+    });
+  } else {
+    submenuHTML = `
+      <div class="context-menu-item" style="opacity: 0.5; cursor: default;">
+        <span>No groups assigned</span>
+      </div>
+    `;
   }
 
   submenu.innerHTML = submenuHTML;
@@ -1088,6 +1123,50 @@ async function addToGroup(file, groupName) {
   }
 }
 
+// Remove a file from a group
+async function removeFromGroup(groupName) {
+  if (!contextMenuTarget) return;
+
+  try {
+    // Get current file metadata
+    const response = await fetch(`/api/file/${contextMenuTarget.path}`);
+    const data = await response.json();
+
+    if (data.success) {
+      const fileData = data.data;
+      const currentGroups = fileData.groups || [];
+
+      // Remove from groups
+      const updatedGroups = currentGroups.filter(g => g !== groupName);
+
+      // Save updated metadata
+      const saveResponse = await fetch(`/api/file/${contextMenuTarget.path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          markdown: fileData.markdown,
+          title: fileData.title,
+          tags: fileData.tags || [],
+          groups: updatedGroups,
+          isPasswordProtected: fileData.isPasswordProtected || false,
+          password: fileData.password
+        })
+      });
+
+      const saveData = await saveResponse.json();
+      if (saveData.success) {
+        updateStatus(`Removed from group: ${groupName}`);
+        await loadFiles(); // Reload to show updated grouping
+      }
+    }
+  } catch (error) {
+    console.error('Error removing from group:', error);
+    await showAlert('Error', 'Failed to remove note from group.');
+  }
+
+  hideContextMenu();
+}
+
 // Share file
 async function shareFile() {
   if (!contextMenuTarget) {
@@ -1693,6 +1772,118 @@ async function manageSharedNotes() {
   closeUserPanel();
   openModal('shared-links-modal');
   await loadSharedLinks();
+}
+
+// Manage groups
+async function manageGroups() {
+  closeUserPanel();
+  openModal('manage-groups-modal');
+  await renderGroupsList();
+}
+
+// Render groups list with delete options
+async function renderGroupsList() {
+  const container = document.getElementById('groups-list-container');
+  if (!container) return;
+
+  // Collect all unique groups and count notes in each
+  const groupStats = {};
+  allFiles.forEach(file => {
+    if (file.groups && file.groups.length > 0) {
+      file.groups.forEach(group => {
+        if (!groupStats[group]) {
+          groupStats[group] = 0;
+        }
+        groupStats[group]++;
+      });
+    }
+  });
+
+  const groups = Object.keys(groupStats).sort();
+
+  if (groups.length === 0) {
+    container.innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 40px;">No groups found</p>';
+    return;
+  }
+
+  let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
+
+  groups.forEach(group => {
+    const noteCount = groupStats[group];
+    html += `
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--bg-secondary); border-radius: 6px; border: 1px solid var(--border-light);">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <div>
+            <div style="font-weight: 500; color: var(--text-primary);">${escapeHtml(group)}</div>
+            <div style="font-size: 12px; color: var(--text-secondary);">${noteCount} note${noteCount !== 1 ? 's' : ''}</div>
+          </div>
+        </div>
+        <button
+          class="btn-danger"
+          style="padding: 6px 12px; font-size: 13px;"
+          onclick="deleteGroup('${escapeHtml(group).replace(/'/g, "\\'")}')">
+          Delete
+        </button>
+      </div>
+    `;
+  });
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+// Delete a group
+async function deleteGroup(groupName) {
+  const confirmed = await showConfirm(
+    'Delete Group',
+    `Are you sure you want to delete the group "${groupName}"? This will remove the group from all notes that belong to it.`
+  );
+
+  if (!confirmed) return;
+
+  try {
+    updateStatus('Deleting group...');
+
+    // Find all notes in this group and remove the group from them
+    const notesInGroup = allFiles.filter(file =>
+      file.groups && file.groups.includes(groupName)
+    );
+
+    for (const file of notesInGroup) {
+      // Get current file metadata
+      const response = await fetch(`/api/file/${file.path}`);
+      const data = await response.json();
+
+      if (data.success) {
+        const fileData = data.data;
+        const updatedGroups = (fileData.groups || []).filter(g => g !== groupName);
+
+        // Save updated metadata
+        await fetch(`/api/file/${file.path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            markdown: fileData.markdown,
+            title: fileData.title,
+            tags: fileData.tags || [],
+            groups: updatedGroups,
+            isPasswordProtected: fileData.isPasswordProtected || false,
+            password: fileData.password
+          })
+        });
+      }
+    }
+
+    updateStatus('Group deleted');
+    await loadFiles(); // Reload files to update the groups
+    await renderGroupsList(); // Re-render the groups list
+  } catch (error) {
+    console.error('Error deleting group:', error);
+    await showAlert('Error', 'Failed to delete group.');
+  }
 }
 
 // Open tag cloud modal
