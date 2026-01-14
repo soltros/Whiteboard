@@ -526,6 +526,361 @@ Run Whiteboard on:
 *Whiteboard stays focused on core note-taking. No bloat, no distractions.*`,
         tags: ['features', 'help', 'guide'],
         groups: ['Getting Started']
+      },
+      {
+        id: 'readme-documentation',
+        title: 'Complete Documentation (README)',
+        markdown: `# Whiteboard
+
+A clean, privacy-focused note-taking application with markdown support, rich text editing, and complete data sovereignty. Your notes are stored as simple markdown files that you own and control.
+
+## Philosophy
+
+Whiteboard is built on the principle that your notes should belong to you. No subscriptions, no cloud lock-in, no tracking. Just a simple, powerful tool that respects your data and your privacy.
+
+## Features
+
+### Core Note Taking
+- **Rich Text Editor**: WYSIWYG editing powered by Toast UI Editor with markdown support
+- **Auto-save**: Changes save automatically 1 second after editing
+- **Multiple Views**: Grid, list, and grouped organization modes
+- **Privacy Mode**: Hide note previews for sensitive work
+- **Word Count**: Real-time word count tracking
+- **Document Titles**: Editable titles displayed in the footer
+
+### Organization
+- **Tags**: Categorize notes with searchable tags
+- **Groups**: Organize notes into multiple groups (notes can belong to several groups)
+- **Tag Cloud**: Visual overview of all tags with usage frequency
+- **Full-Text Search**: Search across note titles, content, tags, and groups
+- **Collage View**: Visual grid of note cards with previews
+- **Grouped View**: Notes organized by their assigned groups
+
+### Sharing & Security
+- **Shareable Links**: Generate public links for individual notes
+- **Password Protection**: Optional password protection for notes
+- **Share Management**: View and revoke active share links
+- **Session Security**: Automatic session validation and timeout handling
+- **Privacy Controls**: Toggle preview visibility for sensitive environments
+
+### Media & Import/Export
+- **Image Support**: Upload and embed images (JPEG, PNG, GIF, WebP, SVG)
+- **10MB Limit**: Per-image size limit for reasonable storage
+- **Markdown Import**: Import existing markdown files
+- **Bulk Export**: Export all notes as a ZIP archive of markdown files
+- **Pure Markdown**: Notes stored as standard .md files for maximum portability
+
+### Multi-User Support
+- **User Accounts**: Multiple users with individual note collections
+- **Admin Panel**: User management and system settings
+- **Role-Based Access**: Admin and regular user roles
+- **Password Management**: Users can change their own passwords
+- **Isolated Storage**: Each user's notes stored separately
+
+### Mobile & Responsive
+- **Mobile-First Design**: Fully responsive interface for all screen sizes
+- **Touch Optimized**: Context menus and controls designed for touch
+- **Collapsible Navigation**: Sidebar collapses on mobile devices
+- **Landscape Support**: Optimized for both portrait and landscape
+- **Print-Friendly**: Clean print layouts for note archival
+
+## Installation
+
+### Prerequisites
+
+- Docker and Docker Compose (recommended for production)
+- Node.js 18.x or higher (for local development only)
+- npm or yarn package manager (for local development only)
+
+### Production Deployment (Recommended)
+
+The primary and recommended way to run Whiteboard is through Docker using the included Dockerfile and docker-compose.yml.
+
+Quick start with Docker:
+\`\`\`bash
+git clone <repository-url>
+cd Whiteboard
+docker compose up -d
+\`\`\`
+
+Access the application at http://localhost:2452
+
+Default credentials:
+- Username: \`admin\`
+- Password: \`admin123\`
+
+See DOCKER.md for detailed Docker deployment instructions, including environment variables, volume management, and reverse proxy configuration.
+
+### Local Development
+
+For development purposes only:
+
+1. Clone the repository
+2. Install dependencies: \`npm install\`
+3. Start the development server: \`npm run dev\`
+4. Access the application at http://localhost:2452
+
+## Configuration
+
+### Environment Variables
+
+Create a \`.env\` file in the project root:
+
+\`\`\`env
+SESSION_SECRET=your-secure-random-string-here
+PORT=2452
+TZ=America/New_York
+\`\`\`
+
+### Application Settings
+
+After logging in as admin:
+1. Navigate to Admin Panel
+2. Go to Settings
+3. Configure Public URL Base for share links
+
+## Usage
+
+### Creating and Editing Notes
+
+1. Click the "+ New Note" button
+2. Enter a name for the note
+3. Start writing in the editor
+4. The title can be edited in the footer while viewing the note
+5. Changes auto-save after 1 second
+
+### Organizing with Tags and Groups
+
+**Tags:**
+- Right-click on a note → "Manage Tags"
+- Add multiple tags per note
+- Press Enter to add each tag
+
+**Groups:**
+- Right-click on a note → "Add to Group"
+- Create new groups or add to existing ones
+- Notes can belong to multiple groups
+- Toggle "All Notes/Groups" to switch between views
+
+**Tag Cloud:**
+- Click your username → "Tag Cloud"
+- View all tags with usage frequency
+- Click any tag to filter notes
+
+### Search and Navigation
+
+- Use the search bar to find notes by title, content, tags, or groups
+- Switch between Grid and List view
+- Toggle between All Notes and Groups view
+- Enable Privacy Mode to hide note previews
+
+### Sharing Notes
+
+1. Right-click on a note → "Share Link"
+2. Copy the generated link
+3. Optionally, password protect the note first
+
+**Managing Shared Links:**
+- Click your username → "Manage Shared Notes"
+- View all active share links
+- Copy links or revoke sharing
+
+### Importing and Exporting
+
+**Import:**
+- Click your username → "Import Notes (.md)"
+- Choose one or more markdown files
+
+**Export:**
+- Click your username → "Export All Notes"
+- Downloads a ZIP file with all notes
+
+### Admin Functions
+
+**User Management:**
+- Click "Admin Panel"
+- Create, update, or delete user accounts
+- Toggle admin privileges
+- Reset user passwords
+
+**Settings:**
+- Click "Admin Panel" → Settings tab
+- Update Public URL Base for share links
+
+## Storage Architecture
+
+Whiteboard uses a per-user database architecture for optimal performance.
+
+### Benefits
+- **Fast Traversal**: Single database.json read gives all note metadata
+- **Pure Markdown**: Content stored as standard .md files
+- **Scalable**: Each user has their own isolated database
+- **Simple Backups**: Just backup the data directory
+- **Portable**: Markdown files work with any editor
+
+## API Endpoints
+
+### Authentication
+- \`POST /api/auth/login\` - User login
+- \`POST /api/auth/logout\` - User logout
+- \`GET /api/auth/me\` - Get current user
+- \`POST /api/auth/change-password\` - Change password
+
+### Notes
+- \`GET /api/files\` - List all notes for current user
+- \`GET /api/file/:noteId\` - Get specific note
+- \`POST /api/file/:noteId\` - Save/update note
+- \`POST /api/files/new\` - Create new note
+- \`DELETE /api/file/:noteId\` - Delete note
+- \`POST /api/file/metadata/:noteId\` - Update note metadata
+- \`POST /api/file/verify-password/:noteId\` - Verify note password
+
+### Sharing
+- \`POST /api/file/share/:noteId\` - Generate share link
+- \`DELETE /api/file/share/:noteId\` - Remove share link
+- \`GET /api/shared/:shareId\` - Access shared note (public)
+- \`GET /api/shares\` - List all shared notes
+
+### Media
+- \`POST /api/notes/:noteId/upload\` - Upload image
+- \`GET /api/media/:userId/:noteId/:filename\` - Access media file
+
+### Search
+- \`GET /api/search?q=query\` - Search notes
+
+### Admin (requires admin role)
+- \`GET /api/admin/users\` - List all users
+- \`POST /api/admin/users\` - Create new user
+- \`PUT /api/admin/users/:username\` - Update user
+- \`DELETE /api/admin/users/:username\` - Delete user
+- \`GET /api/admin/settings\` - Get application settings
+- \`PUT /api/admin/settings\` - Update application settings
+
+## Security
+
+### Production Deployment
+
+1. **Change Default Credentials** - Immediately change the admin password
+2. **Set Strong Session Secret** - Generate a strong random string
+3. **Use HTTPS** - Deploy behind a reverse proxy (nginx, Caddy, Traefik)
+4. **Regular Backups** - Backup data/, shared/, users.json, settings.json
+5. **Keep Dependencies Updated** - Run \`npm audit\` regularly
+
+### Password Storage
+
+- User passwords are hashed with bcrypt
+- Note passwords are hashed separately per note
+- Session cookies are HTTP-only and signed
+
+## Keyboard Shortcuts
+
+- \`Ctrl+S\` (or \`Cmd+S\` on Mac) - Manual save current note
+- \`Enter\` - Submit in modals and tag input
+- \`Escape\` - Close modals
+
+## Browser Support
+
+- Chrome/Edge 90+
+- Firefox 88+
+- Safari 14+
+- Mobile browsers (iOS Safari, Chrome Mobile)
+
+## Native Applications
+
+### Android App (Coming Soon)
+
+A native Android application is in development using Kotlin and Jetpack Compose.
+
+**Features:**
+- Native Material Design 3 interface
+- Offline-first with local SQLite storage
+- Background sync with server
+- Native sharing integration
+- Biometric authentication support
+
+### Linux App (Coming Soon)
+
+A native Linux application is in development using Rust and GTK 4.
+
+**Features:**
+- Native GTK 4 interface with libadwaita
+- Desktop integration (notifications, system tray)
+- Flatpak packaging for easy distribution
+- Offline-first with local storage
+- Background sync support
+
+## Performance
+
+- Auto-save debounced to 1 second
+- Search debounced to 300ms
+- Images lazy-loaded in editor
+- Efficient CSS with minimal reflows
+- Session validation every 5 minutes
+- Single database read for all note metadata
+
+## Troubleshooting
+
+### Port Already in Use
+- Change PORT in .env file
+- Update docker-compose.yml port mapping
+- Restart the application
+
+### Cannot Login
+- Check that users.json exists in project root
+- Delete users.json to reset to default admin account
+- Restart the server
+
+### Share Links Not Working
+- Login as admin → Admin Panel → Settings
+- Set Public URL Base to your domain
+
+### Images Not Displaying
+- Check that data/ directory exists and is writable
+- Verify file permissions
+- Check browser console for 403/404 errors
+
+### Groups Not Showing
+- Toggle to "Groups" view using the switch
+- Notes must be added to groups via right-click menu
+- Refresh the page if groups don't appear
+
+## Development
+
+### Code Style
+- ES6+ JavaScript features
+- Async/await for asynchronous operations
+- Functional programming patterns where appropriate
+- Clear variable and function names
+- Comments for complex logic
+
+### Adding Features
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
+
+## License
+
+ISC License
+
+## Contributing
+
+Contributions are welcome. Please:
+1. Open an issue to discuss major changes
+2. Follow the existing code style
+3. Add appropriate documentation
+4. Test your changes thoroughly
+
+## Support
+
+For issues, questions, or feature requests, please open an issue on the project repository.
+
+---
+
+**This is the complete Whiteboard documentation. For the latest version, check the README.md file in the repository.**`,
+        tags: ['documentation', 'readme', 'reference'],
+        groups: ['Getting Started']
       }
     ];
 
