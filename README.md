@@ -430,8 +430,7 @@ Pure markdown content here...
 
 ### Android App (Coming Soon)
 
-A native Android application is in development using Kotlin and Jetpack Compose. See [android-app.md](android-app.md) for architecture and development details.
-
+A native Android application is in development using Kotlin and Jetpack Compose.
 **Features:**
 - Native Material Design 3 interface
 - Offline-first with local SQLite storage
@@ -441,7 +440,7 @@ A native Android application is in development using Kotlin and Jetpack Compose.
 
 ### Linux App (Coming Soon)
 
-A native Linux application is in development using Rust and GTK 4. See [linux-app.md](linux-app.md) for architecture and development details.
+A native Linux application is in development using Rust and GTK 4. 
 
 **Features:**
 - Native GTK 4 interface with libadwaita
@@ -450,9 +449,7 @@ A native Linux application is in development using Rust and GTK 4. See [linux-ap
 - Offline-first with local storage
 - Background sync support
 
-### Development Setup
 
-For developing either native app in VSCode, see [vscode-setup.md](vscode-setup.md) for complete setup instructions including extensions, tasks, and debugging configuration.
 
 ## Performance
 
