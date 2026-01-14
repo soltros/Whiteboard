@@ -1,6 +1,6 @@
-# Whiteboard
+# ![Whiteboard Logo](public/favicon.svg) Whiteboard 
 
-A clean, privacy-focused note-taking application with markdown support, rich text editing, and complete data sovereignty. Your notes are stored as simple markdown files that you own and control.
+A clean, privacy-focused, self-hosted note-taking application with markdown support, rich text editing, and complete data sovereignty. Your notes are stored as simple markdown files that you own and control.
 
 ![Whiteboard Grid View](screenshots/2.png)
 
@@ -87,8 +87,6 @@ Access the application at http://localhost:2452
 Default credentials:
 - Username: `admin`
 - Password: `admin123`
-
-See [DOCKER.md](DOCKER.md) for detailed Docker deployment instructions, including environment variables, volume management, and reverse proxy configuration.
 
 ### Local Development
 
@@ -341,8 +339,6 @@ data/
 Pure markdown content here...
 ```
 
-For migration from older versions, see [MIGRATION.md](MIGRATION.md).
-
 ## API Endpoints
 
 ### Authentication
@@ -434,8 +430,7 @@ For migration from older versions, see [MIGRATION.md](MIGRATION.md).
 
 ### Android App (Coming Soon)
 
-A native Android application is in development using Kotlin and Jetpack Compose. See [android-app.md](android-app.md) for architecture and development details.
-
+A native Android application is in development using Kotlin and Jetpack Compose.
 **Features:**
 - Native Material Design 3 interface
 - Offline-first with local SQLite storage
@@ -445,7 +440,7 @@ A native Android application is in development using Kotlin and Jetpack Compose.
 
 ### Linux App (Coming Soon)
 
-A native Linux application is in development using Rust and GTK 4. See [linux-app.md](linux-app.md) for architecture and development details.
+A native Linux application is in development using Rust and GTK 4. 
 
 **Features:**
 - Native GTK 4 interface with libadwaita
@@ -454,9 +449,7 @@ A native Linux application is in development using Rust and GTK 4. See [linux-ap
 - Offline-first with local storage
 - Background sync support
 
-### Development Setup
 
-For developing either native app in VSCode, see [vscode-setup.md](vscode-setup.md) for complete setup instructions including extensions, tasks, and debugging configuration.
 
 ## Performance
 
