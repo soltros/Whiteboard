@@ -1708,6 +1708,7 @@ async function getNotesForUser(userId) {
         path: noteId,
         type: 'file',
         tags: metadata.tags || [],
+        groups: metadata.groups || [],
         isPasswordProtected: metadata.isPasswordProtected || false,
         isShared: !!metadata.shareId,
         shareId: metadata.shareId,
