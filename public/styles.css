@@ -500,7 +500,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding-bottom: 20px;
+  padding-bottom: 0;
 }
 
 #editor {
@@ -513,7 +513,7 @@ body {
 .toastui-editor-defaultUI {
   border: none !important;
   height: 100%;
-  padding-bottom: 30px !important;
+  padding-bottom: 0 !important;
 }
 
 .toastui-editor-main-container {
@@ -521,7 +521,7 @@ body {
   border: none !important;
 }
 
-/* Toolbar - minimal styling, left aligned, sticky */
+/* Toolbar - minimal styling, left aligned, fixed to prevent covering content */
 .toastui-editor-defaultUI-toolbar {
   text-align: left !important;
   padding: 8px 24px 8px 60px !important;
@@ -531,8 +531,7 @@ body {
   background: #fafafa !important;
   border: none !important;
   border-bottom: 1px solid var(--border-light) !important;
-  position: sticky !important;
-  top: 0 !important;
+  position: relative !important;
   z-index: 100 !important;
 }
 

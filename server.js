@@ -630,26 +630,42 @@ PORT=2452
 TZ=America/New_York
 \`\`\`
 
-**Generating a Secure Session Secret:**
+#### Generating a Secure Session Secret
 
-The SESSION_SECRET encrypts user session cookies. Generate a random string using one of these methods:
+The \`SESSION_SECRET\` is used to encrypt user session cookies. It must be a long, random string that is impossible to guess.
 
-**Linux/Mac (OpenSSL):**
+**Option 1: Using OpenSSL (Linux/Mac)**
 \`\`\`bash
 openssl rand -base64 32
 \`\`\`
 
-**Node.js:**
+**Option 2: Using Node.js**
 \`\`\`bash
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 \`\`\`
 
-**Python:**
+**Option 3: Using Python**
 \`\`\`bash
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 \`\`\`
 
-**Important:** Never share your SESSION_SECRET or commit it to version control.
+**Option 4: Online Generator**
+Visit https://www.random.org/strings/ and generate a random string with:
+- Length: 32 characters
+- Character set: Alphanumeric + symbols
+
+**Example \`.env\` file:**
+\`\`\`env
+SESSION_SECRET=K7x9mP2nQ5wR8tY3uI6oA1sD4fG7hJ0k
+PORT=2452
+TZ=America/New_York
+\`\`\`
+
+**Important:**
+- Never share your SESSION_SECRET with anyone
+- Never commit it to version control (the .env file is already in .gitignore)
+- Use a different secret for each deployment (development, staging, production)
+- If compromised, generate a new secret immediately (all users will need to log in again)
 
 ### Application Settings
 
