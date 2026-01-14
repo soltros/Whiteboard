@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod:*)",
+      "Bash(node migrate-notes.js:*)",
+      "Bash(node -c:*)"
+    ]
+  }
+}

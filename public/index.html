@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Whiteboard</title>
-  <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -39,7 +39,6 @@
             </svg>
             <span class="collections-text">Tags</span>
           </button>
-          <input type="text" id="document-title" placeholder="Untitled Document" class="title-input">
         </div>
         <div id="user-info" class="user-info">
           <!-- User info will be loaded here -->
@@ -66,7 +65,7 @@
         </div>
       </div>
 
-      <!-- Bottom Bar (Dark Green) -->
+      <!-- Bottom Bar -->
       <div class="footer">
         <div class="footer-left">
           <button id="privacy-btn" class="privacy-btn" onclick="togglePrivacyMode()" title="Toggle privacy mode">
@@ -83,6 +82,13 @@
             </svg>
           </button>
           <span id="status">Ready</span>
+        </div>
+        <div class="footer-center">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+          </svg>
+          <input type="text" id="document-title" placeholder="Untitled" class="footer-title-input">
         </div>
         <span id="word-count">0 words</span>
       </div>
@@ -145,6 +151,18 @@
         <line x1="7" y1="7" x2="7.01" y2="7"></line>
       </svg>
       Manage Tags
+    </div>
+    <div class="context-menu-item context-menu-parent" id="add-to-group-item">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+      </svg>
+      Add to Group
+      <svg class="context-menu-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="9 18 15 12 9 6"></polyline>
+      </svg>
+      <div class="context-submenu" id="groups-submenu">
+        <!-- Dynamically populated -->
+      </div>
     </div>
     <div class="context-menu-item" onclick="setPasswordForFile(); event.stopPropagation();">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -341,14 +359,6 @@
     </div>
   </div>
 
-  <!-- Quill Editor -->
-  <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
-  <!-- Turndown for HTML to Markdown -->
-  <script src="https://unpkg.com/turndown/dist/turndown.js"></script>
-  <!-- Marked for Markdown to HTML -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <!-- DOMPurify for HTML Sanitization -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.8/purify.min.js"></script>
   <!-- App Script -->
   <script src="app.js"></script>
 </body>

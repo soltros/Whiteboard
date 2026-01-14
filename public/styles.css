@@ -495,57 +495,125 @@ body {
   background: var(--bg-editor);
 }
 
+#editor-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 20px;
+}
+
 #editor {
   flex: 1;
   overflow-y: auto;
 }
 
-/* Quill Editor - Minimal Styling */
-.ql-container {
-  font-size: 15px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+/* Toast UI Editor - Minimal Styling */
+/* Let the editor use its default styles, just customize colors and spacing */
+.toastui-editor-defaultUI {
+  border: none !important;
   height: 100%;
-  overflow-y: auto;
+  padding-bottom: 30px !important;
+}
+
+.toastui-editor-main-container {
+  background: transparent !important;
   border: none !important;
 }
 
-.ql-editor {
-  padding: var(--spacing-xl) 15%;
-  min-height: 100%;
-  line-height: 1.5;
-  color: var(--text-primary);
+/* Toolbar - minimal styling, left aligned, sticky */
+.toastui-editor-defaultUI-toolbar {
+  text-align: left !important;
+  padding: 8px 24px 8px 60px !important;
+  min-height: auto !important;
+  height: auto !important;
+  margin-bottom: 0 !important;
+  background: #fafafa !important;
+  border: none !important;
+  border-bottom: 1px solid var(--border-light) !important;
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 100 !important;
 }
 
-.ql-editor p {
-  margin-bottom: 0.4em;
+/* Editor containers - modern gradient background */
+.toastui-editor-md-container,
+.toastui-editor-ww-container {
+  background: linear-gradient(to bottom, #f8f9fa 0%, #f1f3f5 100%) !important;
+  padding: 0 !important;
+  margin-top: 0 !important;
 }
 
-.ql-editor p:last-child {
-  margin-bottom: 0;
+/* The actual writing area - clean white with subtle shadow */
+.toastui-editor .ProseMirror,
+.toastui-editor .CodeMirror {
+  padding: 20px 60px 40px 60px !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  font-size: 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  line-height: 1.7;
+  background: #ffffff !important;
+  box-shadow: none !important;
+  min-height: calc(100vh - 220px) !important;
+  color: #2c3e50 !important;
 }
 
-.ql-editor::-webkit-scrollbar {
+/* Scrollbar styling */
+.toastui-editor .ProseMirror::-webkit-scrollbar,
+.toastui-editor .CodeMirror-scroll::-webkit-scrollbar {
   width: 8px;
 }
 
-.ql-editor::-webkit-scrollbar-track {
+.toastui-editor .ProseMirror::-webkit-scrollbar-track,
+.toastui-editor .CodeMirror-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.ql-editor::-webkit-scrollbar-thumb {
+.toastui-editor .ProseMirror::-webkit-scrollbar-thumb,
+.toastui-editor .CodeMirror-scroll::-webkit-scrollbar-thumb {
   background: var(--border-medium);
   border-radius: 4px;
 }
 
-.ql-editor::-webkit-scrollbar-thumb:hover {
-  background: var(--border-dark);
+/* Hide mode switch tab */
+.toastui-editor-mode-switch {
+  display: none !important;
 }
 
+/* Style dropdowns and popups */
+.toastui-editor-popup {
+  background: white !important;
+  border: 1px solid var(--border-medium) !important;
+  border-radius: 4px !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+.toastui-editor-popup-body {
+  padding: var(--spacing-sm) !important;
+}
+
+/* Table styling */
+.toastui-editor .ProseMirror table {
+  border-collapse: collapse !important;
+  width: 100% !important;
+  margin: 1em 0 !important;
+}
+
+.toastui-editor .ProseMirror table td,
+.toastui-editor .ProseMirror table th {
+  border: 1px solid var(--border-medium) !important;
+  padding: 8px 12px !important;
+}
+
+.toastui-editor .ProseMirror table th {
+  background: var(--bg-sidebar) !important;
+  font-weight: 600 !important;
+}
+
+/* Remove old Quill styles */
 .ql-toolbar {
-  border: none !important;
-  border-bottom: 1px solid var(--border-light) !important;
-  background: var(--bg-app);
-  padding: var(--spacing-sm) var(--spacing-lg) !important;
+  display: none;
 }
 
 .ql-toolbar button {
@@ -746,19 +814,63 @@ body {
 .footer {
   background: linear-gradient(90deg, var(--bg-app) 0%, rgba(65, 105, 225, 0.03) 100%);
   color: var(--text-tertiary);
-  padding: var(--spacing-sm) var(--spacing-xl);
+  padding: 12px var(--spacing-xl);
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
   border-top: 1px solid rgba(65, 105, 225, 0.15);
-  min-height: 32px;
+  min-height: 48px;
 }
 
 .footer-left {
   display: flex;
   align-items: center;
   gap: var(--spacing-md);
+  flex: 1;
+}
+
+.footer-center {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex: 1;
+  justify-content: center;
+  max-width: 400px;
+}
+
+.footer-center svg {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.footer-title-input {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 8px;
+  outline: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  transition: all var(--transition);
+  border-radius: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.footer-title-input::placeholder {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.footer-title-input:hover {
+  background: rgba(65, 105, 225, 0.05);
+}
+
+.footer-title-input:focus {
+  background: rgba(65, 105, 225, 0.08);
+  color: var(--text-primary);
 }
 
 #status {
@@ -769,6 +881,8 @@ body {
 
 #word-count {
   color: var(--text-muted);
+  flex: 1;
+  text-align: right;
 }
 
 .privacy-btn {

@@ -160,6 +160,394 @@ async function saveSettings(settings) {
   await fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
 }
 
+// Initialize demo notes for admin
+async function initializeDemoNotes() {
+  try {
+    const userId = 'admin';
+    const users = await loadUsers();
+    
+    // Only create notes if admin exists
+    if (!users[userId]) return;
+
+    await ensureUserDir(userId);
+    const database = await loadUserDatabase(userId);
+    
+    const demoNotes = [
+      {
+        id: 'welcome',
+        title: 'Welcome to Whiteboard',
+        markdown: `# Welcome to Whiteboard
+
+Whiteboard is a **free, open-source note-taking application** designed to keep your notes sovereign and under your control. No subscriptions, no data mining, no vendor lock-in—just a clean, distraction-free writing experience.
+
+## What is Whiteboard?
+
+Whiteboard is built on the principle that **your notes belong to you**. Period.
+
+- **Self-hosted**: Run it on your own server, not someone else's cloud
+- **Open source**: Inspect, modify, and contribute to the code
+- **Free forever**: No premium tiers, no feature paywalls
+- **Privacy-first**: Your data stays on your server, encrypted at rest
+- **No tracking**: We don't collect analytics, telemetry, or usage data
+
+## Core Philosophy
+
+### Data Sovereignty
+Your notes are stored as simple Markdown files on your server. You can back them up, migrate them, or export them at any time. No proprietary formats, no data silos.
+
+### Simplicity Over Bloat
+Whiteboard focuses on what matters: writing and organizing notes. No AI suggestions, no social features, no unnecessary complexity.
+
+### Open Source Forever
+Licensed under MIT, Whiteboard will always be free and open. The community can fork, extend, or modify it as needed. No company can ever take it away or make it proprietary.
+
+## Key Features
+
+### 📝 Markdown Editing
+Write in plain Markdown with live preview and syntax highlighting. Use the toolbar for quick formatting or type Markdown directly.
+
+### 🏷️ Tags & Groups
+Organize notes with tags and groups. Search by tag, filter by group, or browse everything in one view.
+
+### 🔒 Privacy Mode
+Password-protect sensitive notes with client-side encryption. Only you can decrypt them.
+
+### 🔗 Sharing
+Generate public share links for notes you want to publish. Full control over what's shared.
+
+### 🖼️ Image Support
+Upload and embed images directly in your notes. Images are stored alongside your notes on your server.
+
+### 🌐 Multi-device Access
+Access your notes from any device with a web browser. Native mobile and desktop apps coming soon (also open source).
+
+### 🔍 Full-text Search
+Quickly find notes by searching through titles, content, tags, and groups.
+
+## Why Whiteboard Exists
+
+In a world of subscription fatigue and privacy invasions, we built Whiteboard as an alternative:
+
+- **No $9.99/month**: It's free. Forever.
+- **No "Your trial has expired"**: Everything is available from day one.
+- **No "We're shutting down"**: Self-hosted means it runs as long as your server runs.
+- **No "We updated our privacy policy"**: Your data never touches our servers.
+- **No "Upgrade to Pro"**: There is no Pro. Everyone gets the same features.
+
+## Getting Started
+
+1. Create notes with the **"+ New Note"** button
+2. Write in Markdown or use the toolbar
+3. Organize with **tags** and **groups** (right-click any note)
+4. Share notes with public links when needed
+5. Password-protect sensitive information
+
+## Open Source
+
+Whiteboard is MIT licensed and developed openly on GitHub. Contributions welcome!
+
+- Report bugs and request features
+- Submit pull requests
+- Fork and customize for your needs
+- Deploy on your infrastructure
+
+**Your notes. Your server. Your rules.**
+
+---
+
+*Whiteboard is built by people who believe software should respect users, not extract value from them.*`,
+        tags: ['welcome', 'info'],
+        groups: ['Getting Started']
+      },
+      {
+        id: 'markdown-guide',
+        title: 'Markdown Formatting Guide',
+        markdown: `# Markdown Formatting Guide
+
+Whiteboard uses standard Markdown for formatting. This guide covers everything you need to know.
+
+## Text Formatting
+
+**Bold text** with \`**double asterisks**\`
+*Italic text* with \`*single asterisks*\`
+***Bold and italic*** with \`***triple asterisks***\`
+~~Strikethrough~~ with \`~~double tildes~~\`
+
+## Headings
+
+\`\`\`
+# Heading 1
+## Heading 2
+### Heading 3
+#### Heading 4
+\`\`\`
+
+## Lists
+
+### Unordered Lists
+- Item one
+- Item two
+  - Nested item
+  - Another nested item
+- Item three
+
+### Ordered Lists
+1. First item
+2. Second item
+3. Third item
+   1. Nested numbered item
+   2. Another nested item
+
+### Task Lists
+- [x] Completed task
+- [ ] Incomplete task
+- [ ] Another task
+
+## Links and Images
+
+### Links
+[Link text](https://example.com)
+[Link with title](https://example.com "Hover title")
+
+### Images
+![Alt text](image-url.jpg)
+![Image with title](image-url.jpg "Image caption")
+
+**Tip**: Use the image button in the toolbar to upload images directly!
+
+## Code
+
+### Inline Code
+Use \`backticks\` for inline code.
+
+### Code Blocks
+\`\`\`javascript
+function hello() {
+  console.log("Hello, Whiteboard!");
+}
+\`\`\`
+
+\`\`\`python
+def greet(name):
+    print(f"Hello, {name}!")
+\`\`\`
+
+## Quotes
+
+> This is a blockquote.
+> It can span multiple lines.
+>
+> — Author Name
+
+## Tables
+
+| Feature | Supported |
+|---------|-----------|
+| Markdown | ✓ |
+| Images | ✓ |
+| Tables | ✓ |
+| Privacy | ✓ |
+
+## Horizontal Rules
+
+Use three or more hyphens, asterisks, or underscores:
+
+---
+
+## Tips
+
+- Use the **toolbar** for quick formatting
+- Right-click notes to add **tags** and **groups**
+- Toggle **privacy mode** for sensitive notes
+- **Auto-save** runs automatically as you type
+- Press **Ctrl/Cmd + S** to save manually
+
+---
+
+*Markdown keeps your notes portable and future-proof. No proprietary formats!*`,
+        tags: ['markdown', 'help', 'guide'],
+        groups: ['Getting Started']
+      },
+      {
+        id: 'features-overview',
+        title: 'Features Overview',
+        markdown: `# Whiteboard Features
+
+A comprehensive overview of everything Whiteboard offers.
+
+## Organization
+
+### Tags
+Add tags to categorize notes across topics. Click the **Tags** button to browse all tags or filter notes by clicking tag badges.
+
+**How to use tags:**
+- Right-click any note → "Manage Tags"
+- Add multiple tags per note
+- Search notes by tag name
+- Browse tag cloud to see all tags
+
+### Groups
+Groups let you organize notes into collections (like Projects, Personal, Work, etc.). Unlike folders, notes can belong to multiple groups.
+
+**How to use groups:**
+- Right-click any note → "Add to Group"
+- Create new groups on the fly
+- Toggle "Groups" view to see notes organized by group
+- Notes can be in multiple groups simultaneously
+
+### Search
+Full-text search across all notes. Searches through:
+- Note titles
+- Note content
+- Tags
+- Groups
+
+## Privacy & Security
+
+### Password Protection
+Encrypt sensitive notes with password protection. Encrypted notes:
+- Require password to open
+- Use client-side encryption
+- Are encrypted at rest on your server
+- Can't be decrypted without the password
+
+**To password-protect a note:**
+1. Right-click the note
+2. Select "Password Protect"
+3. Set a strong password
+4. Only you can decrypt it
+
+### Privacy Mode
+Toggle privacy mode to hide the privacy button indicator when working in public spaces.
+
+## Sharing
+
+### Public Share Links
+Generate shareable links for notes you want to publish:
+- Right-click a note → "Share Link"
+- Copy the generated URL
+- Share with anyone (no account needed)
+- Revoke access anytime from "Manage Shared Notes"
+
+**Shared notes are:**
+- Read-only for recipients
+- Publicly accessible via link
+- Revokable at any time
+- Listed in your user panel
+
+## Writing Experience
+
+### Live Markdown Preview
+See your formatted text in real-time as you write. Toggle between markdown source and preview modes.
+
+### Formatting Toolbar
+Quick access to common formatting:
+- Bold, italic, strikethrough
+- Headings (H1-H6)
+- Lists (ordered, unordered, tasks)
+- Links and images
+- Code blocks
+- Quotes and tables
+
+### Image Uploads
+Upload images directly from the toolbar:
+1. Click the image button
+2. Select an image file
+3. Image is uploaded to your server
+4. Markdown image tag is inserted automatically
+
+### Auto-save
+Notes save automatically as you type. No need to hit save manually (but you can with Ctrl/Cmd + S).
+
+## Views
+
+### Grid View
+Default view showing note cards in a grid layout with:
+- Note titles
+- Preview of content
+- Tags
+- Last modified date
+
+### List View
+Compact list view for scanning many notes quickly. Shows title, preview, and tags in rows.
+
+### Groups View
+When enabled, organizes notes into sections by group name. Perfect for project-based organization.
+
+## Import & Export
+
+### Import Notes
+Import notes from other apps or backups:
+- Supports Markdown (.md) files
+- Bulk import multiple files
+- Preserves formatting
+
+### Export All Notes
+Download all your notes as a ZIP archive:
+- One .md file per note
+- Includes all metadata
+- Perfect for backups or migration
+
+## Multi-user Support
+
+Whiteboard supports multiple users on the same server:
+- Each user has isolated notes
+- Admin can manage all users
+- User-specific tags and groups
+- Shared server, private notes
+
+## Technical Details
+
+### Data Storage
+- Notes stored as JSON in user directories
+- Markdown content preserved as plain text
+- Images stored in per-note media folders
+- Simple file structure for easy backup
+
+### Browser Compatibility
+Works in all modern browsers:
+- Chrome/Edge (recommended)
+- Firefox
+- Safari
+- Mobile browsers
+
+### Self-hosting
+Run Whiteboard on:
+- Your own server
+- Raspberry Pi
+- VPS/cloud instance
+- Docker container
+- Home network (LAN access)
+
+---
+
+**Everything you need, nothing you don't.**
+
+*Whiteboard stays focused on core note-taking. No bloat, no distractions.*`,
+        tags: ['features', 'help', 'guide'],
+        groups: ['Getting Started']
+      }
+    ];
+
+    for (const note of demoNotes) {
+      if (!database.notes[note.id]) {
+        await writeNoteData(userId, note.id, {
+          title: note.title,
+          markdown: note.markdown,
+          tags: note.tags,
+          groups: note.groups || [],
+          isPasswordProtected: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+        console.log(`Created demo note: ${note.title}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error initializing demo notes:', error);
+  }
+}
+
 // Ensure shared directory exists
 async function ensureSharedDir() {
   try {
@@ -972,13 +1360,18 @@ app.post('/api/file/metadata/:noteId', async (req, res) => {
   try {
     const userId = req.session.userId;
     const noteId = req.params.noteId;
-    const { tags, password, isPasswordProtected } = req.body;
+    const { tags, groups, password, isPasswordProtected } = req.body;
 
     const data = await readNoteData(userId, noteId);
 
     // Update tags
     if (tags !== undefined) {
       data.tags = tags;
+    }
+
+    // Update groups
+    if (groups !== undefined) {
+      data.groups = groups;
     }
 
     // Update password protection
@@ -1126,7 +1519,7 @@ app.post('/api/file/:noteId', async (req, res) => {
   try {
     const userId = req.session.userId;
     const noteId = req.params.noteId;
-    const { markdown, title, tags, password, isPasswordProtected } = req.body;
+    const { markdown, title, tags, groups, password, isPasswordProtected } = req.body;
 
     await ensureUserDir(userId);
 
@@ -1134,16 +1527,22 @@ app.post('/api/file/:noteId', async (req, res) => {
       title: title || 'Untitled',
       markdown,
       tags: tags || [],
+      groups: groups || [],
       isPasswordProtected: isPasswordProtected || false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
-    // If file exists, preserve createdAt, shareId, and password if not updating
+    // If file exists, preserve createdAt, shareId, groups, and password if not updating
     try {
       const existingData = await readNoteData(userId, noteId);
       data.createdAt = existingData.createdAt;
       data.shareId = existingData.shareId;
+
+      // Preserve existing groups if not provided in request
+      if (!groups) {
+        data.groups = existingData.groups || [];
+      }
 
       // Update password if provided, otherwise keep existing
       if (isPasswordProtected && password) {
@@ -1179,6 +1578,7 @@ app.post('/api/files/new', async (req, res) => {
       title: name || 'Untitled',
       markdown: '',
       tags: [],
+      groups: [],
       isPasswordProtected: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -1415,7 +1815,8 @@ async function searchNotes(userId, query) {
 }
 
 // Start server
-Promise.all([ensureDataDir(), ensureSharedDir(), initializeUsers(), initializeSettings()]).then(() => {
+Promise.all([ensureDataDir(), ensureSharedDir(), initializeUsers(), initializeSettings()]).then(async () => {
+  await initializeDemoNotes();
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });

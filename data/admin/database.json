@@ -1,3 +1,24 @@
 {
-  "notes": {}
+  "notes": {
+    "welcome": {
+      "title": "Welcome to Whiteboard",
+      "tags": [
+        "welcome",
+        "info"
+      ],
+      "isPasswordProtected": false,
+      "createdAt": "2026-01-13T19:15:24.533Z",
+      "updatedAt": "2026-01-13T19:15:24.534Z"
+    },
+    "markdown-guide": {
+      "title": "Markdown Guide",
+      "tags": [
+        "markdown",
+        "help"
+      ],
+      "isPasswordProtected": false,
+      "createdAt": "2026-01-13T19:15:24.543Z",
+      "updatedAt": "2026-01-13T19:15:24.544Z"
+    }
+  }
 }

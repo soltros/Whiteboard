@@ -5,12 +5,16 @@ let isAdmin = false;
 // Current file state
 let currentFile = null;
 let currentFilePath = null;
-let quill = null;
+let editor = null;
 let autoSaveTimer = null;
 let currentFileTags = [];
+let currentFileGroups = [];
 let currentFilePassword = null;
 let currentShareUrl = null;
 let privacyMode = false;
+let currentViewMode = 'grid';
+let groupsViewEnabled = false;
+let allFiles = [];
 
 // Context menu state
 let contextMenuTarget = null;
@@ -162,31 +166,60 @@ function updateUserInfo() {
   }
 }
 
-// Initialize Quill editor
-function initEditor() {
-  quill = new Quill('#editor', {
-    theme: 'snow',
-    modules: {
-      toolbar: {
-        container: [
-          [{ 'header': [1, 2, 3, false] }],
-          ['bold', 'italic', 'underline', 'strike'],
-          ['blockquote', 'code-block'],
-          [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-          [{ 'indent': '-1'}, { 'indent': '+1' }],
-          ['link', 'image'],
-          ['clean']
-        ],
-        handlers: {
-          image: imageHandler
-        }
+// Load Toast UI Editor resources dynamically
+async function loadEditorResources() {
+  // Toast UI Editor CSS
+  const css = document.createElement('link');
+  css.rel = 'stylesheet';
+  css.href = 'https://uicdn.toast.com/editor/latest/toastui-editor.min.css';
+  document.head.appendChild(css);
+
+  // Toast UI Editor JS
+  if (!window.toastui) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js';
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+}
+
+// Initialize Toast UI Editor
+async function initEditor() {
+  await loadEditorResources();
+
+  const editorElement = document.getElementById('editor');
+  if (editorElement && editorElement.tagName === 'TEXTAREA') {
+    const div = document.createElement('div');
+    div.id = 'editor';
+    editorElement.parentNode.replaceChild(div, editorElement);
+  }
+
+  editor = new toastui.Editor({
+    el: document.getElementById('editor'),
+    height: '100%',
+    initialEditType: 'wysiwyg',
+    previewStyle: 'vertical',
+    placeholder: 'Start writing...',
+    usageStatistics: false,
+    toolbarItems: [
+      ['heading', 'bold', 'italic', 'strike'],
+      ['hr', 'quote'],
+      ['ul', 'ol', 'task', 'indent', 'outdent'],
+      ['table', 'link', 'image'],
+      ['code', 'codeblock'],
+    ],
+    hooks: {
+      addImageBlobHook: async (blob, callback) => {
+        await imageHandler(blob, callback);
       }
-    },
-    placeholder: 'Start writing...'
+    }
   });
 
   // Auto-save on text change
-  quill.on('text-change', () => {
+  editor.on('change', () => {
     updateSaveButton('unsaved');
     clearTimeout(autoSaveTimer);
     autoSaveTimer = setTimeout(() => {
@@ -198,76 +231,45 @@ function initEditor() {
   });
 }
 
-// Custom image handler for Quill
-function imageHandler() {
+// Custom image handler for Toast UI Editor
+async function imageHandler(blob, callback) {
   if (!currentFilePath) {
     updateStatus('Please save the note first before adding images');
     return;
   }
 
-  const input = document.createElement('input');
-  input.setAttribute('type', 'file');
-  input.setAttribute('accept', 'image/jpeg,image/jpg,image/png,image/gif,image/webp,image/svg+xml');
-  input.click();
+  // Validate file size (10MB max)
+  if (blob.size > 10 * 1024 * 1024) {
+    await showAlert('File Too Large', 'Image must be smaller than 10MB');
+    return;
+  }
 
-  input.onchange = async () => {
-    const file = input.files[0];
-    if (!file) return;
+  // Show uploading status
+  updateStatus('Uploading image...');
 
-    // Validate file size (10MB max)
-    if (file.size > 10 * 1024 * 1024) {
-      await showAlert('File Too Large', 'Image must be smaller than 10MB');
-      return;
-    }
+  const formData = new FormData();
+  formData.append('image', blob);
 
-    // Show uploading status
-    updateStatus('Uploading image...');
+  try {
+    const response = await fetch(`/api/notes/${currentFilePath}/upload`, {
+      method: 'POST',
+      body: formData
+    });
 
-    const formData = new FormData();
-    formData.append('image', file);
-
-    try {
-      const response = await fetch(`/api/notes/${currentFilePath}/upload`, {
-        method: 'POST',
-        body: formData
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        // Insert the image into the editor
-        const range = quill.getSelection(true);
-        quill.insertEmbed(range.index, 'image', data.url);
-        quill.setSelection(range.index + 1);
-        updateStatus('Image uploaded');
-      } else {
-        await showAlert('Upload Failed', data.error || 'Failed to upload image');
-        updateStatus('Error uploading image');
-      }
-    } catch (error) {
-      console.error('Error uploading image:', error);
-      await showAlert('Upload Failed', 'Failed to upload image');
+    const data = await response.json();
+    if (data.success) {
+      // Return the image URL to Toast UI Editor
+      callback(data.imageUrl, data.imageName);
+      updateStatus('Image uploaded');
+    } else {
+      await showAlert('Upload Failed', data.error || 'Failed to upload image');
       updateStatus('Error uploading image');
     }
-  };
-}
-
-// Initialize Turndown for HTML to Markdown conversion
-const turndownService = new TurndownService({
-  headingStyle: 'atx',
-  codeBlockStyle: 'fenced'
-});
-
-// Convert Quill Delta/HTML to Markdown
-function quillToMarkdown() {
-  const html = quill.root.innerHTML;
-  return turndownService.turndown(html);
-}
-
-// Convert Markdown to HTML and load into Quill
-function markdownToQuill(markdown) {
-  const html = marked.parse(markdown);
-  const cleanHtml = DOMPurify.sanitize(html);
-  quill.root.innerHTML = cleanHtml;
+  } catch (error) {
+    console.error('Error uploading image:', error);
+    await showAlert('Upload Failed', 'Failed to upload image');
+    updateStatus('Error uploading image');
+  }
 }
 
 // Load files from server
@@ -277,6 +279,7 @@ async function loadFiles() {
     const data = await response.json();
 
     if (data.success) {
+      allFiles = data.files;
       renderFileTree(data.files);
     } else if (data.error === 'Unauthorized') {
       window.location.href = '/login.html';
@@ -297,10 +300,56 @@ function showContextMenu(event, item) {
   const contextMenu = document.getElementById('context-menu');
   contextMenuTarget = item;
 
+  // Populate groups submenu
+  populateGroupsSubmenu();
+
   // Position the menu
   contextMenu.style.left = `${event.clientX}px`;
   contextMenu.style.top = `${event.clientY}px`;
   contextMenu.classList.add('active');
+}
+
+// Populate the groups submenu with existing groups
+function populateGroupsSubmenu() {
+  const submenu = document.getElementById('groups-submenu');
+  if (!submenu) return;
+
+  // Collect all unique groups from all files
+  const allGroups = new Set();
+  allFiles.forEach(file => {
+    if (file.groups && file.groups.length > 0) {
+      file.groups.forEach(group => allGroups.add(group));
+    }
+  });
+
+  const groupsArray = Array.from(allGroups).sort();
+
+  // Build submenu HTML
+  let submenuHTML = `
+    <div class="context-menu-item" onclick="createNewGroup(); event.stopPropagation();">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+      New Group...
+    </div>
+  `;
+
+  if (groupsArray.length > 0) {
+    submenuHTML += `<div class="context-menu-separator"></div>`;
+    groupsArray.forEach(group => {
+      submenuHTML += `
+        <div class="context-menu-item" onclick="addToExistingGroup('${escapeHtml(group)}'); event.stopPropagation();">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+          </svg>
+          ${escapeHtml(group)}
+        </div>
+      `;
+    });
+  }
+
+  submenu.innerHTML = submenuHTML;
 }
 
 // Hide context menu
@@ -320,6 +369,7 @@ async function openFile(filePath) {
       currentFile = data.data;
       currentFilePath = filePath;
       currentFileTags = currentFile.tags || [];
+      currentFileGroups = currentFile.groups || [];
       currentShareUrl = currentFile.shareId ? `(shared)` : null;
 
       // Check password if protected
@@ -347,16 +397,21 @@ async function openFile(filePath) {
         currentFilePassword = password;
       }
 
-      document.getElementById('document-title').value = currentFile.title;
-      markdownToQuill(currentFile.markdown || '');
+      // Show editor first, hide collage
+      showEditor();
+
+      // Set title if element exists
+      const titleInput = document.getElementById('document-title');
+      if (titleInput) {
+        titleInput.value = currentFile.title;
+      }
+
+      editor.setMarkdown(currentFile.markdown || '');
       updateStatus('File loaded');
       updateWordCount();
 
       // Close mobile sidebar when file is opened
       closeMobileSidebar();
-
-      // Show editor, hide collage
-      showEditor();
     }
   } catch (error) {
     console.error('Error opening file:', error);
@@ -368,21 +423,38 @@ async function openFile(filePath) {
 function showEditor() {
   document.getElementById('editor-wrapper').style.display = 'block';
   document.getElementById('collage-view').style.display = 'none';
-  document.getElementById('document-title').style.display = '';
+
+  // Show document title in footer
+  const footerCenter = document.querySelector('.footer-center');
+  if (footerCenter) {
+    footerCenter.style.display = 'flex';
+  }
+
+  if (editor) {
+    // Toast UI Editor doesn't need manual refresh like CodeMirror
+  }
 }
 
 // Show collage, hide editor
 function showCollage() {
   document.getElementById('editor-wrapper').style.display = 'none';
   document.getElementById('collage-view').style.display = 'block';
-  document.getElementById('document-title').style.display = 'none';
+
+  // Hide document title in footer
+  const footerCenter = document.querySelector('.footer-center');
+  if (footerCenter) {
+    footerCenter.style.display = 'none';
+  }
 
   // Clear current file
   currentFilePath = null;
   currentFile = null;
 
   // Clear document title
-  document.getElementById('document-title').value = '';
+  const titleInput = document.getElementById('document-title');
+  if (titleInput) {
+    titleInput.value = '';
+  }
 }
 
 // Navigate to collections view (user-initiated)
@@ -394,6 +466,72 @@ function navigateToCollections() {
 // Render collage view with note cards
 function renderCollageView(files) {
   const collageGrid = document.getElementById('collage-grid');
+  
+  // Inject view styles and controls
+  injectViewStyles();
+  
+  if (collageGrid && !document.getElementById('view-controls')) {
+    const controls = document.createElement('div');
+    controls.id = 'view-controls';
+    controls.className = 'view-controls';
+    controls.innerHTML = `
+      <div class="view-control-group">
+        <span class="view-label">All Notes</span>
+        <label class="switch">
+          <input type="checkbox" id="groups-mode-toggle">
+          <span class="slider round"></span>
+        </label>
+        <span class="view-label">Groups</span>
+      </div>
+      <div class="view-control-group">
+        <span class="view-label">Grid</span>
+        <label class="switch">
+          <input type="checkbox" id="view-mode-toggle">
+          <span class="slider round"></span>
+        </label>
+        <span class="view-label">List</span>
+      </div>
+    `;
+    
+    if (collageGrid.parentNode) {
+      collageGrid.parentNode.insertBefore(controls, collageGrid);
+    }
+
+    // View mode toggle (Grid/List)
+    const viewToggle = document.getElementById('view-mode-toggle');
+    if (viewToggle) {
+      viewToggle.addEventListener('change', (e) => {
+        currentViewMode = e.target.checked ? 'list' : 'grid';
+        if (currentViewMode === 'list') {
+          collageGrid.classList.add('list-view');
+        } else {
+          collageGrid.classList.remove('list-view');
+        }
+      });
+    }
+
+    // Groups mode toggle (All Notes/Groups)
+    const groupsToggle = document.getElementById('groups-mode-toggle');
+    if (groupsToggle) {
+      groupsToggle.addEventListener('change', (e) => {
+        groupsViewEnabled = e.target.checked;
+        renderCollageView(allFiles);
+      });
+    }
+  }
+  
+  // Sync toggle states and apply class
+  const viewToggleElement = document.getElementById('view-mode-toggle');
+  if (viewToggleElement) viewToggleElement.checked = currentViewMode === 'list';
+
+  const groupsToggleElement = document.getElementById('groups-mode-toggle');
+  if (groupsToggleElement) groupsToggleElement.checked = groupsViewEnabled;
+
+  if (currentViewMode === 'list') {
+    collageGrid.classList.add('list-view');
+  } else {
+    collageGrid.classList.remove('list-view');
+  }
 
   if (!files || files.length === 0) {
     collageGrid.innerHTML = `
@@ -413,6 +551,12 @@ function renderCollageView(files) {
 
   // Clear the grid
   collageGrid.innerHTML = '';
+
+  // If groups view is enabled, render grouped view
+  if (groupsViewEnabled) {
+    renderGroupedView(files, collageGrid);
+    return;
+  }
 
   // Create cards with proper event listeners
   files.forEach(note => {
@@ -455,12 +599,120 @@ function renderCollageView(files) {
   });
 }
 
+// Render grouped view - organize notes by their groups
+function renderGroupedView(files, collageGrid) {
+  // Group files by their groups
+  const grouped = {};
+  const ungrouped = [];
+
+  files.forEach(file => {
+    if (file.groups && file.groups.length > 0) {
+      file.groups.forEach(group => {
+        if (!grouped[group]) {
+          grouped[group] = [];
+        }
+        grouped[group].push(file);
+      });
+    } else {
+      ungrouped.push(file);
+    }
+  });
+
+  // Render each group
+  Object.keys(grouped).sort().forEach(groupName => {
+    const groupSection = document.createElement('div');
+    groupSection.className = 'group-section';
+
+    const groupHeader = document.createElement('div');
+    groupHeader.className = 'group-header';
+    groupHeader.innerHTML = `
+      <h3 class="group-title">${escapeHtml(groupName)}</h3>
+      <span class="group-count">${grouped[groupName].length} note${grouped[groupName].length !== 1 ? 's' : ''}</span>
+    `;
+    groupSection.appendChild(groupHeader);
+
+    const groupGrid = document.createElement('div');
+    groupGrid.className = 'group-grid';
+
+    grouped[groupName].forEach(note => {
+      const card = createNoteCard(note);
+      groupGrid.appendChild(card);
+    });
+
+    groupSection.appendChild(groupGrid);
+    collageGrid.appendChild(groupSection);
+  });
+
+  // Render ungrouped notes if any
+  if (ungrouped.length > 0) {
+    const groupSection = document.createElement('div');
+    groupSection.className = 'group-section';
+
+    const groupHeader = document.createElement('div');
+    groupHeader.className = 'group-header';
+    groupHeader.innerHTML = `
+      <h3 class="group-title">Ungrouped</h3>
+      <span class="group-count">${ungrouped.length} note${ungrouped.length !== 1 ? 's' : ''}</span>
+    `;
+    groupSection.appendChild(groupHeader);
+
+    const groupGrid = document.createElement('div');
+    groupGrid.className = 'group-grid';
+
+    ungrouped.forEach(note => {
+      const card = createNoteCard(note);
+      groupGrid.appendChild(card);
+    });
+
+    groupSection.appendChild(groupGrid);
+    collageGrid.appendChild(groupSection);
+  }
+}
+
+// Create a note card element (extracted from renderCollageView for reuse)
+function createNoteCard(note) {
+  const date = new Date(note.updatedAt).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  });
+
+  const preview = note.summary || 'Empty note';
+  const tags = (note.tags || []).slice(0, 3);
+
+  const card = document.createElement('div');
+  card.className = 'collage-card';
+  card.innerHTML = `
+    <div class="collage-card-header">
+      <h3 class="collage-card-title">${escapeHtml(note.title)}</h3>
+      <span class="collage-card-date">${date}</span>
+    </div>
+    ${!privacyMode ? `<div class="collage-card-preview">${escapeHtml(preview)}</div>` : ''}
+    ${tags.length > 0 ? `
+      <div class="collage-card-tags">
+        ${tags.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('')}
+      </div>
+    ` : ''}
+  `;
+
+  card.addEventListener('click', () => {
+    openFile(note.path);
+  });
+
+  card.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showContextMenu(e, note);
+  });
+
+  return card;
+}
+
 // Save current file
 async function saveCurrentFile() {
   if (!currentFilePath) return;
 
   try {
-    const markdown = quillToMarkdown();
+    const markdown = editor.getMarkdown();
     const title = document.getElementById('document-title').value || 'Untitled';
 
     const response = await fetch(`/api/file/${currentFilePath}`, {
@@ -470,6 +722,7 @@ async function saveCurrentFile() {
         markdown,
         title,
         tags: currentFileTags,
+        groups: currentFileGroups,
         isPasswordProtected: currentFile?.isPasswordProtected || false,
         password: currentFilePassword
       })
@@ -586,7 +839,7 @@ async function deleteFile() {
       if (currentFilePath === target.path) {
           currentFile = null;
           currentFilePath = null;
-          quill.setText('');
+          editor.setMarkdown('');
           document.getElementById('document-title').value = '';
         }
 
@@ -770,6 +1023,71 @@ async function savePassword() {
   }
 }
 
+// Create new group and add file to it
+async function createNewGroup() {
+  if (!contextMenuTarget) return;
+
+  const groupName = await showPrompt('New Group', 'Enter new group name:');
+  if (!groupName || groupName.trim() === '') return;
+
+  await addToGroup(contextMenuTarget, groupName.trim());
+  hideContextMenu();
+}
+
+// Add file to an existing group
+async function addToExistingGroup(groupName) {
+  if (!contextMenuTarget) return;
+
+  await addToGroup(contextMenuTarget, groupName);
+  hideContextMenu();
+}
+
+// Add a file to a group
+async function addToGroup(file, groupName) {
+  try {
+    // Get current file metadata
+    const response = await fetch(`/api/file/${file.path}`);
+    const data = await response.json();
+
+    if (data.success) {
+      const fileData = data.data;
+      const currentGroups = fileData.groups || [];
+
+      // Check if already in group
+      if (currentGroups.includes(groupName)) {
+        await showAlert('Already in Group', `This note is already in the "${groupName}" group.`);
+        return;
+      }
+
+      // Add to groups
+      currentGroups.push(groupName);
+
+      // Save updated metadata
+      const saveResponse = await fetch(`/api/file/${file.path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          markdown: fileData.markdown,
+          title: fileData.title,
+          tags: fileData.tags || [],
+          groups: currentGroups,
+          isPasswordProtected: fileData.isPasswordProtected || false,
+          password: fileData.password
+        })
+      });
+
+      const saveData = await saveResponse.json();
+      if (saveData.success) {
+        updateStatus(`Added to group: ${groupName}`);
+        await loadFiles(); // Reload to show updated grouping
+      }
+    }
+  } catch (error) {
+    console.error('Error adding to group:', error);
+    await showAlert('Error', 'Failed to add note to group.');
+  }
+}
+
 // Share file
 async function shareFile() {
   if (!contextMenuTarget) {
@@ -855,6 +1173,201 @@ function escapeHtml(text) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+// Inject styles for view controls and list view
+function injectViewStyles() {
+  if (document.getElementById('view-styles')) return;
+  
+  const style = document.createElement('style');
+  style.id = 'view-styles';
+  style.textContent = `
+    .view-controls {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      padding: 0 10px 15px 10px;
+    }
+    .view-label {
+      margin: 0 10px;
+      font-size: 14px;
+      color: #666;
+      font-weight: 500;
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 46px;
+      height: 24px;
+    }
+    .switch input { 
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 34px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: #2196F3;
+    }
+    input:focus + .slider {
+      box-shadow: 0 0 1px #2196F3;
+    }
+    input:checked + .slider:before {
+      transform: translateX(22px);
+    }
+    
+    /* List View Styles */
+    .collage-grid.list-view {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .collage-grid.list-view .collage-card {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      width: 100%;
+      padding: 15px;
+      height: auto;
+      min-height: 0;
+    }
+    .collage-grid.list-view .collage-card-title {
+      flex: 0 0 25%;
+      margin-bottom: 0;
+      font-size: 16px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding-right: 15px;
+    }
+    .collage-grid.list-view .collage-card-preview {
+      flex: 1;
+      margin: 0;
+      height: auto;
+      -webkit-line-clamp: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #666;
+      font-size: 14px;
+      padding-right: 15px;
+    }
+    .collage-grid.list-view .collage-card-meta {
+      flex: 0 0 auto;
+      margin-top: 0;
+      display: flex;
+      align-items: center;
+      margin-left: auto;
+    }
+    .collage-grid.list-view .collage-card-tags {
+      margin-right: 15px;
+      display: flex;
+      gap: 5px;
+    }
+    
+    @media (max-width: 600px) {
+      .collage-grid.list-view .collage-card {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .collage-grid.list-view .collage-card-title,
+      .collage-grid.list-view .collage-card-preview,
+      .collage-grid.list-view .collage-card-meta {
+        width: 100%;
+        flex: none;
+        margin-bottom: 5px;
+      }
+      .collage-grid.list-view .collage-card-meta {
+        margin-left: 0;
+        justify-content: space-between;
+      }
+    }
+
+    /* View Control Groups */
+    .view-control-group {
+      display: flex;
+      align-items: center;
+      margin: 0 15px;
+    }
+
+    /* Group Section Styles */
+    .group-section {
+      margin-bottom: 35px;
+    }
+    .group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px 12px 10px;
+      border-bottom: 2px solid #e0e0e0;
+      margin-bottom: 20px;
+    }
+    .group-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #333;
+      margin: 0;
+    }
+    .group-count {
+      font-size: 14px;
+      color: #666;
+      background: #f0f0f0;
+      padding: 4px 12px;
+      border-radius: 12px;
+    }
+    .group-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 20px;
+      padding: 0 10px;
+    }
+
+    /* Context Menu Submenu */
+    .context-menu-parent {
+      position: relative;
+    }
+    .context-menu-arrow {
+      margin-left: auto;
+      opacity: 0.5;
+    }
+    .context-submenu {
+      position: absolute;
+      left: 100%;
+      top: 0;
+      min-width: 200px;
+      background: white;
+      border-radius: 6px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+      padding: 6px 0;
+      display: none;
+      z-index: 10001;
+    }
+    .context-menu-parent:hover > .context-submenu {
+      display: block;
+    }
+  `;
+  document.head.appendChild(style);
 }
 
 // Search files
@@ -1288,7 +1801,7 @@ function updateStatus(message) {
 
 // Update word count
 function updateWordCount() {
-  const text = quill.getText().trim();
+  const text = editor.getMarkdown().trim();
   const words = text ? text.split(/\s+/).length : 0;
   document.getElementById('word-count').textContent = `${words} words`;
 }
@@ -1303,6 +1816,7 @@ document.getElementById('search').addEventListener('input', (e) => {
   }, 300);
 });
 
+// Document title auto-save
 document.getElementById('document-title').addEventListener('input', () => {
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => {
@@ -1377,11 +1891,11 @@ document.querySelectorAll('.modal').forEach(modal => {
 });
 
 // Initialize - check auth first, then load editor
-checkAuth().then(isAuthenticated => {
+checkAuth().then(async isAuthenticated => {
   if (isAuthenticated) {
-    initEditor();
-    loadFiles();
     // Start with collage view visible
     showCollage();
+    await initEditor();
+    await loadFiles();
   }
 });
