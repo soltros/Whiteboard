@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Shared Note - Whiteboard</title>
-  <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
   <style>
     * {
       margin: 0;
@@ -243,8 +242,17 @@
 
     async function loadNote(password = null) {
       try {
-        const url = `/api/shared/${shareId}${password ? `?password=${encodeURIComponent(password)}` : ''}`;
-        const response = await fetch(url);
+        // Password-protected notes use POST to avoid putting the password in the URL/logs
+        let response;
+        if (password) {
+          response = await fetch(`/api/shared/${shareId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+          });
+        } else {
+          response = await fetch(`/api/shared/${shareId}`);
+        }
         const data = await response.json();
 
         if (!response.ok) {

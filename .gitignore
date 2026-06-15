@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Runtime data
+data/
+shared/
+
+# Sensitive configuration
+users.json
+settings.json
+.env
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

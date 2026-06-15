@@ -1,5 +1,6 @@
 const express = require('express');
-const bodyParser = require('body-parser');
+const helmet = require('helmet');
+const morgan = require('morgan');
 const session = require('express-session');
 const bcrypt = require('bcrypt');
 const fs = require('fs').promises;
@@ -7,20 +8,48 @@ const path = require('path');
 const multer = require('multer');
 const crypto = require('crypto');
 
+// Security constants
+const BCRYPT_SALT_ROUNDS = 12;
+
+// Per-user mutex to prevent race conditions on database operations
+const userMutexes = new Map();
+async function withUserLock(userId, fn) {
+  if (!userMutexes.has(userId)) {
+    userMutexes.set(userId, Promise.resolve());
+  }
+  const prev = userMutexes.get(userId);
+  let releaseLock;
+  const next = new Promise(resolve => { releaseLock = resolve; });
+  userMutexes.set(userId, next);
+  try {
+    await prev;
+    return await fn();
+  } finally {
+    releaseLock();
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 2452;
 const DATA_DIR = path.join(__dirname, 'data');
 const SYSTEM_DIR = path.join(DATA_DIR, '_system');
 const USERS_INDEX_FILE = path.join(SYSTEM_DIR, 'users-index.json');
-const USERS_FILE = path.join(__dirname, 'users.json');
-const SETTINGS_FILE = path.join(__dirname, 'settings.json');
+// Store users.json and settings.json in data/_system/ for Docker volume persistence
+const USERS_FILE = path.join(SYSTEM_DIR, 'users.json');
+const SETTINGS_FILE = path.join(SYSTEM_DIR, 'settings.json');
 const SHARED_DIR = path.join(__dirname, 'shared');
 
 // Session secret - in production, use environment variable
 const SESSION_SECRET = process.env.SESSION_SECRET || 'change-this-secret-in-production';
 
 // Middleware
-app.use(bodyParser.json());
+app.use(helmet({
+  // Allow inline scripts needed by the app; tighten in production
+  contentSecurityPolicy: false
+}));
+app.use(morgan('combined'));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 app.use(session({
   secret: SESSION_SECRET,
   resave: false,
@@ -85,13 +114,11 @@ const uploadMiddleware = (req, res, next) => {
 // Auth middleware - protect all other routes
 app.use((req, res, next) => {
   // Allow auth endpoints, login page assets, public shared files, and media files
+  // Note: admin assets (admin.html/css/js) are NOT bypassed — they require authentication
   if (req.path.startsWith('/api/auth') ||
       req.path === '/login.html' ||
       req.path === '/login.css' ||
       req.path === '/login.js' ||
-      req.path === '/admin.html' ||
-      req.path === '/admin.css' ||
-      req.path === '/admin.js' ||
       req.path.startsWith('/api/shared/') ||
       req.path.startsWith('/api/media/')) {
     return next();
@@ -112,6 +139,27 @@ app.use((req, res, next) => {
 // Serve static files
 app.use(express.static('public'));
 
+// Migrate users.json/settings.json from old location to new _system/ location
+async function migrateSystemFiles() {
+  const oldUsersFile = path.join(__dirname, 'users.json');
+  const oldSettingsFile = path.join(__dirname, 'settings.json');
+  try {
+    await fs.access(oldUsersFile);
+    try { await fs.access(USERS_FILE); } catch {
+      // New location doesn't exist yet — migrate
+      await fs.copyFile(oldUsersFile, USERS_FILE);
+      console.log('Migrated users.json to data/_system/users.json');
+    }
+  } catch { /* old file doesn't exist, nothing to migrate */ }
+  try {
+    await fs.access(oldSettingsFile);
+    try { await fs.access(SETTINGS_FILE); } catch {
+      await fs.copyFile(oldSettingsFile, SETTINGS_FILE);
+      console.log('Migrated settings.json to data/_system/settings.json');
+    }
+  } catch { /* old file doesn't exist, nothing to migrate */ }
+}
+
 // Initialize users file with admin account
 async function initializeUsers() {
   try {
@@ -119,7 +167,7 @@ async function initializeUsers() {
   } catch {
     // Create default admin account
     // Password: admin123 (CHANGE THIS IN PRODUCTION!)
-    const adminPassword = await bcrypt.hash('admin123', 10);
+    const adminPassword = await bcrypt.hash('admin123', BCRYPT_SALT_ROUNDS);
     const users = {
       admin: {
         username: 'admin',
@@ -1037,10 +1085,15 @@ async function loadUserDatabase(userId) {
   }
 }
 
-// Save user database
+// Save user database (always use withUserLock to prevent race conditions)
 async function saveUserDatabase(userId, database) {
   const dbPath = getUserDatabasePath(userId);
   await fs.writeFile(dbPath, JSON.stringify(database, null, 2));
+}
+
+// Write note data atomically using per-user mutex
+async function writeNoteDataSafe(userId, noteId, data) {
+  return withUserLock(userId, () => writeNoteData(userId, noteId, data));
 }
 
 // Generate unique note ID
@@ -1114,6 +1167,7 @@ async function readLegacyNoteData(userId, noteId) {
 }
 
 // Write note data to database + markdown file
+// Use writeNoteDataSafe() from external callers to ensure mutex protection
 async function writeNoteData(userId, noteId, data) {
   const { markdown, ...metadata } = data;
 
@@ -1157,7 +1211,7 @@ function recordFailedAttempt(ip) {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    const ip = req.ip || req.connection.remoteAddress;
+    const ip = req.ip || req.socket.remoteAddress;
 
     if (!username || !password) {
       return res.status(400).json({ success: false, error: 'Username and password required' });
@@ -1193,7 +1247,8 @@ app.post('/api/auth/login', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Login error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
@@ -1253,7 +1308,7 @@ app.post('/api/auth/change-password', async (req, res) => {
     }
 
     // Hash and save new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
     user.password = hashedPassword;
     await saveUsers(users);
 
@@ -1262,6 +1317,7 @@ app.post('/api/auth/change-password', async (req, res) => {
     console.error('Error changing password:', error);
     res.status(500).json({ success: false, error: 'Failed to change password' });
   }
+
 });
 
 // ADMIN ROUTES - User Management
@@ -1285,9 +1341,13 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
     }));
     res.json({ success: true, users: userList });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error fetching users:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
+// Username validation regex — restrict to safe characters only
+const USERNAME_REGEX = /^[a-zA-Z0-9_-]{3,30}$/;
 
 // Create new user (admin only)
 app.post('/api/admin/users', requireAdmin, async (req, res) => {
@@ -1298,8 +1358,8 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Username and password required' });
     }
 
-    if (username.length < 3) {
-      return res.status(400).json({ success: false, error: 'Username must be at least 3 characters' });
+    if (!USERNAME_REGEX.test(username)) {
+      return res.status(400).json({ success: false, error: 'Username must be 3-30 characters and contain only letters, numbers, underscores, and hyphens' });
     }
 
     if (password.length < 6) {
@@ -1313,7 +1373,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     }
 
     // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
 
     users[username] = {
       username,
@@ -1329,7 +1389,8 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
 
     res.json({ success: true, user: { username, isAdmin: isAdmin || false } });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error creating user:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
@@ -1358,7 +1419,7 @@ app.put('/api/admin/users/:username', requireAdmin, async (req, res) => {
       if (password.length < 6) {
         return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
       }
-      users[username].password = await bcrypt.hash(password, 10);
+      users[username].password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
     }
 
     // Update admin status if provided
@@ -1370,33 +1431,16 @@ app.put('/api/admin/users/:username', requireAdmin, async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error updating user:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
 // Helper function to recursively delete a directory
 async function deleteDirectory(dirPath) {
   try {
-    const stat = await fs.stat(dirPath);
-    if (!stat.isDirectory()) {
-      await fs.unlink(dirPath);
-      return;
-    }
-
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const fullPath = path.join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        await deleteDirectory(fullPath);
-      } else {
-        await fs.unlink(fullPath);
-      }
-    }
-
-    await fs.rmdir(dirPath);
+    await fs.rm(dirPath, { recursive: true, force: true });
   } catch (error) {
-    // Ignore errors if directory doesn't exist
     if (error.code !== 'ENOENT') {
       throw error;
     }
@@ -1467,7 +1511,7 @@ app.delete('/api/admin/users/:username', requireAdmin, async (req, res) => {
     res.json({ success: true, message: `User ${username} and all their data has been permanently deleted` });
   } catch (error) {
     console.error('Error deleting user:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
@@ -1479,7 +1523,8 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
     const settings = await loadSettings();
     res.json({ success: true, settings });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error fetching settings:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
@@ -1495,7 +1540,8 @@ app.put('/api/admin/settings', requireAdmin, async (req, res) => {
     await saveSettings({ publicUrlBase });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error updating settings:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
@@ -1792,8 +1838,10 @@ app.get('/api/media/:userId/:noteId/:filename', async (req, res) => {
     }
 
     const mediaPath = path.join(getNoteMediaDir(userId, noteId), path.basename(filename));
-    // Security: Add CSP headers to prevent XSS in SVGs or other files
+    // Security: Add headers to prevent XSS in SVGs or other files
     res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', 'inline');
     res.sendFile(mediaPath);
   } catch (error) {
     res.status(404).json({ success: false, error: 'File not found' });
@@ -1893,7 +1941,7 @@ app.post('/api/file/metadata/:noteId', async (req, res) => {
       data.isPasswordProtected = isPasswordProtected;
 
       if (isPasswordProtected && password) {
-        data.password = await bcrypt.hash(password, 10);
+        data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
       } else if (!isPasswordProtected) {
         delete data.password;
       }
@@ -1901,7 +1949,7 @@ app.post('/api/file/metadata/:noteId', async (req, res) => {
 
     data.updatedAt = new Date().toISOString();
 
-    await writeNoteData(userId, noteId, data);
+    await writeNoteDataSafe(userId, noteId, data);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -2060,18 +2108,18 @@ app.post('/api/file/:noteId', async (req, res) => {
 
       // Update password if provided, otherwise keep existing
       if (isPasswordProtected && password) {
-        data.password = await bcrypt.hash(password, 10);
+        data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
       } else if (isPasswordProtected && existingData.password) {
         data.password = existingData.password;
       }
     } catch {
       // New file - hash password if provided
       if (isPasswordProtected && password) {
-        data.password = await bcrypt.hash(password, 10);
+        data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
       }
     }
 
-    await writeNoteData(userId, noteId, data);
+    await writeNoteDataSafe(userId, noteId, data);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -2098,10 +2146,11 @@ app.post('/api/files/new', async (req, res) => {
       updatedAt: new Date().toISOString()
     };
 
-    await writeNoteData(userId, noteId, data);
+    await writeNoteDataSafe(userId, noteId, data);
     res.json({ success: true, noteId, path: noteId });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error creating note:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
@@ -2128,11 +2177,11 @@ app.post('/api/notes/import', async (req, res) => {
       updatedAt: new Date().toISOString()
     };
 
-    await writeNoteData(userId, noteId, data);
+    await writeNoteDataSafe(userId, noteId, data);
     res.json({ success: true, noteId, path: noteId });
   } catch (error) {
     console.error('Error importing note:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
@@ -2169,9 +2218,9 @@ app.get('/api/notes/export', async (req, res) => {
           // File might not exist
         }
 
-        // Create a safe filename from the title
-        const safeTitle = metadata.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-        const filename = `${safeTitle}.md`;
+        // Create a safe filename from the title — append noteId to guarantee uniqueness
+        const safeTitle = (metadata.title || 'untitled').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const filename = `${safeTitle}_${noteId}.md`;
 
         // Add markdown content to archive
         archive.append(markdown, { name: filename });
@@ -2254,12 +2303,9 @@ app.get('/shared/:shareId', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'shared.html'));
 });
 
-// API: Access shared file (public)
-app.get('/api/shared/:shareId', async (req, res) => {
+// Shared note request handler (shared by GET and POST)
+async function handleSharedNoteRequest(shareId, password, res) {
   try {
-    const { shareId } = req.params;
-    const { password } = req.query;
-
     // Get shared file metadata
     const sharedPath = path.join(SHARED_DIR, path.basename(shareId) + '.json');
     const sharedContent = await fs.readFile(sharedPath, 'utf-8');
@@ -2302,6 +2348,20 @@ app.get('/api/shared/:shareId', async (req, res) => {
   } catch (error) {
     res.status(404).json({ success: false, error: 'Shared file not found' });
   }
+}
+
+// API: Access shared file (public) — GET for unprotected notes
+app.get('/api/shared/:shareId', async (req, res) => {
+  const { shareId } = req.params;
+  // Ignore any query-string password (legacy) — unprotected GET only
+  await handleSharedNoteRequest(shareId, null, res);
+});
+
+// API: Access password-protected shared file — POST with password in body
+app.post('/api/shared/:shareId', async (req, res) => {
+  const { shareId } = req.params;
+  const { password } = req.body;
+  await handleSharedNoteRequest(shareId, password, res);
 });
 
 // API: Search files
@@ -2309,12 +2369,19 @@ app.get('/api/search', async (req, res) => {
   try {
     const userId = req.session.userId;
     const { q } = req.query;
-    const userDir = await ensureUserDir(userId);
 
-    const results = await searchNotes(userId, q.toLowerCase());
+    // Return empty results for empty/missing query instead of crashing
+    const query = (q || '').trim().toLowerCase();
+    if (!query) {
+      return res.json({ success: true, results: [] });
+    }
+
+    await ensureUserDir(userId);
+    const results = await searchNotes(userId, query);
     res.json({ success: true, results });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Search error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
@@ -2357,9 +2424,28 @@ async function searchNotes(userId, query) {
 }
 
 // Start server
-Promise.all([ensureDataDir(), ensureSharedDir(), initializeUsers(), initializeSettings()]).then(async () => {
+Promise.all([ensureDataDir(), ensureSharedDir()]).then(async () => {
+  await migrateSystemFiles();
+  await Promise.all([initializeUsers(), initializeSettings()]);
   await initializeDemoNotes();
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Graceful shutdown handler
+  function gracefulShutdown(signal) {
+    console.log(`\nReceived ${signal}, shutting down gracefully...`);
+    server.close(() => {
+      console.log('HTTP server closed.');
+      process.exit(0);
+    });
+    // Force exit after 10 seconds if server doesn't close
+    setTimeout(() => {
+      console.error('Forcing shutdown after timeout.');
+      process.exit(1);
+    }, 10000);
+  }
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 });

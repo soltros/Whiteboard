@@ -263,7 +263,7 @@ async function imageHandler(blob, callback) {
     const data = await response.json();
     if (data.success) {
       // Return the image URL to Toast UI Editor
-      callback(data.imageUrl, data.imageName);
+      callback(data.url, blob.name || 'image');
       updateStatus('Image uploaded');
     } else {
       await showAlert('Upload Failed', data.error || 'Failed to upload image');
@@ -333,7 +333,7 @@ function populateGroupsSubmenu() {
 
   // Build submenu HTML
   let submenuHTML = `
-    <div class="context-menu-item" onclick="createNewGroup(); event.stopPropagation();">
+    <div class="context-menu-item" data-action="new-group">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <line x1="12" y1="5" x2="12" y2="19"></line>
         <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -346,7 +346,7 @@ function populateGroupsSubmenu() {
     submenuHTML += `<div class="context-menu-separator"></div>`;
     groupsArray.forEach(group => {
       submenuHTML += `
-        <div class="context-menu-item" onclick="addToExistingGroup('${escapeHtml(group)}'); event.stopPropagation();">
+        <div class="context-menu-item" data-action="add-to-group" data-group="${escapeHtml(group)}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
           </svg>
@@ -357,7 +357,19 @@ function populateGroupsSubmenu() {
   }
 
   submenu.innerHTML = submenuHTML;
-}
+
+  // Event delegation: handle clicks on submenu items
+  submenu.onclick = (e) => {
+    const item = e.target.closest('[data-action]');
+    if (!item) return;
+    e.stopPropagation();
+    const action = item.dataset.action;
+    if (action === 'new-group') {
+      createNewGroup();
+    } else if (action === 'add-to-group') {
+      addToExistingGroup(item.dataset.group);
+    }
+  };
 
 // Populate the remove from groups submenu with note's current groups
 function populateRemoveGroupsSubmenu() {
@@ -372,7 +384,7 @@ function populateRemoveGroupsSubmenu() {
   if (noteGroups.length > 0) {
     noteGroups.forEach(group => {
       submenuHTML += `
-        <div class="context-menu-item" onclick="removeFromGroup('${escapeHtml(group)}'); event.stopPropagation();">
+        <div class="context-menu-item" data-action="remove-from-group" data-group="${escapeHtml(group)}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
           </svg>
@@ -389,7 +401,16 @@ function populateRemoveGroupsSubmenu() {
   }
 
   submenu.innerHTML = submenuHTML;
-}
+
+  // Event delegation: handle clicks on submenu items
+  submenu.onclick = (e) => {
+    const item = e.target.closest('[data-action]');
+    if (!item) return;
+    e.stopPropagation();
+    if (item.dataset.action === 'remove-from-group') {
+      removeFromGroup(item.dataset.group);
+    }
+  };
 
 // Hide context menu
 function hideContextMenu() {
@@ -886,28 +907,8 @@ async function createNewFile() {
   }
 }
 
-// Create new folder
-async function createNewFolder() {
-  const name = await showPrompt('Create New Folder', 'Enter folder name:');
-  if (!name) return;
-
-  try {
-    const response = await fetch('/api/folders/new', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
-    });
-
-    const data = await response.json();
-    if (data.success) {
-      await loadFiles();
-      updateStatus('Folder created');
-    }
-  } catch (error) {
-    console.error('Error creating folder:', error);
-    updateStatus('Error creating folder');
-  }
-}
+// Note: createNewFolder and moveFileToFolder were removed \u2014 the server has no
+// /api/folders/new or /api/file/move endpoints (architecture uses flat note IDs).
 
 // Delete file from context menu
 async function deleteFile() {
@@ -927,13 +928,13 @@ async function deleteFile() {
     const data = await response.json();
     if (data.success) {
       if (currentFilePath === target.path) {
-          currentFile = null;
-          currentFilePath = null;
-          editor.setMarkdown('');
-          document.getElementById('document-title').value = '';
-        }
+        currentFile = null;
+        currentFilePath = null;
+        editor.setMarkdown('');
+        document.getElementById('document-title').value = '';
+      }
 
-        // Remove card from UI immediately
+      // Remove card from UI immediately
       const cards = document.querySelectorAll('.collage-card');
       const card = Array.from(cards).find(c => c.dataset.path === target.path);
 
@@ -952,39 +953,6 @@ async function deleteFile() {
     console.error('Error deleting file:', error);
     updateStatus('Error deleting file');
   }
-}
-
-// Move file to folder
-async function moveFileToFolder() {
-  if (!contextMenuTarget) return;
-
-  const targetFolder = await showPrompt('Move Note', 'Enter target folder path (leave empty for root):');
-  if (targetFolder === null) return;
-
-  try {
-    const response = await fetch('/api/file/move', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sourcePath: contextMenuTarget.path,
-        targetFolder
-      })
-    });
-
-    const data = await response.json();
-    if (data.success) {
-      if (currentFilePath === contextMenuTarget.path) {
-        currentFilePath = data.newPath;
-      }
-      await refreshCurrentView();
-      updateStatus('Moved successfully');
-    }
-  } catch (error) {
-    console.error('Error moving file:', error);
-    updateStatus('Error moving file');
-  }
-
-  hideContextMenu();
 }
 
 // Manage tags
@@ -1490,26 +1458,16 @@ function copyShareLink() {
   input.select();
   input.setSelectionRange(0, 99999); // For mobile devices
 
-  try {
-    navigator.clipboard.writeText(input.value).then(() => {
-      // Show success feedback
-      const feedback = document.getElementById('share-copy-feedback');
-      feedback.classList.add('active');
-      setTimeout(() => {
-        feedback.classList.remove('active');
-      }, 2000);
-    }).catch(() => {
-      // Fallback for older browsers
-      document.execCommand('copy');
-      const feedback = document.getElementById('share-copy-feedback');
-      feedback.classList.add('active');
-      setTimeout(() => {
-        feedback.classList.remove('active');
-      }, 2000);
-    });
-  } catch (error) {
+  navigator.clipboard.writeText(input.value).then(() => {
+    // Show success feedback
+    const feedback = document.getElementById('share-copy-feedback');
+    feedback.classList.add('active');
+    setTimeout(() => {
+      feedback.classList.remove('active');
+    }, 2000);
+  }).catch((error) => {
     console.error('Failed to copy link:', error);
-  }
+  });
 }
 
 function copyTextToClipboard(text) {
@@ -1517,14 +1475,7 @@ function copyTextToClipboard(text) {
     updateStatus('Link copied to clipboard');
   }).catch(err => {
     console.error('Could not copy text: ', err);
-    // Fallback
-    const textArea = document.createElement("textarea");
-    textArea.value = text;
-    document.body.appendChild(textArea);
-    textArea.select();
-    document.execCommand('copy');
-    document.body.removeChild(textArea);
-    updateStatus('Link copied to clipboard');
+    updateStatus('Could not copy to clipboard');
   });
 }
 

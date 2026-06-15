@@ -1,4 +1,4 @@
-FROM node:20-bullseye
+FROM node:20-alpine
 
 # Set timezone environment variable
 ENV TZ=America/New_York
@@ -6,14 +6,10 @@ ENV TZ=America/New_York
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies (including wget for healthcheck)
-RUN apt-get update && \
-    apt-get install -y tzdata wget && \
-    ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && \
-    echo "America/New_York" > /etc/timezone && \
-    dpkg-reconfigure -f noninteractive tzdata && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# Install system dependencies (including wget for healthcheck and tzdata)
+RUN apk add --no-cache tzdata wget && \
+    cp /usr/share/zoneinfo/America/New_York /etc/localtime && \
+    echo "America/New_York" > /etc/timezone
 
 # Copy package files
 COPY package*.json ./
@@ -25,7 +21,10 @@ RUN npm install --production
 COPY . .
 
 # Create directories for runtime data (will be mounted as volumes)
-RUN mkdir -p /app/data /app/shared
+RUN mkdir -p /app/data /app/shared && chown -R node:node /app
+
+# Run as non-root user for security
+USER node
 
 # Expose port
 EXPOSE 2452

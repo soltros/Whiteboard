@@ -23,6 +23,17 @@ window.fetch = async function(...args) {
 let currentUser = null;
 let sessionCheckInterval = null;
 
+// HTML escaping to prevent XSS
+function escapeHtml(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 // Check if user is admin
 async function checkAuth() {
   try {
@@ -170,19 +181,32 @@ function renderUsers(users) {
     <div class="user-item">
       <div class="user-info">
         <div class="user-name">
-          ${user.username}
+          ${escapeHtml(user.username)}
           ${user.isAdmin ? '<span class="user-badge">ADMIN</span>' : ''}
         </div>
         <div class="user-meta">Created ${new Date(user.createdAt).toLocaleDateString()}</div>
       </div>
       <div class="user-actions">
-        <button class="btn-secondary" onclick="editUser('${user.username}', ${user.isAdmin})">Edit</button>
+        <button class="btn-secondary" data-action="edit" data-username="${escapeHtml(user.username)}" data-is-admin="${user.isAdmin}">Edit</button>
         ${user.username !== 'admin' && user.username !== currentUser.username ?
-          `<button class="btn-danger" onclick="deleteUser('${user.username}')">Delete</button>` :
+          `<button class="btn-danger" data-action="delete" data-username="${escapeHtml(user.username)}">Delete</button>` :
           ''}
       </div>
     </div>
   `).join('');
+
+  // Event delegation: handle edit/delete clicks safely
+  usersList.onclick = (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const username = btn.dataset.username;
+    if (action === 'edit') {
+      editUser(username, btn.dataset.isAdmin === 'true');
+    } else if (action === 'delete') {
+      deleteUser(username);
+    }
+  };
 }
 
 // Open new user modal
@@ -388,6 +412,19 @@ document.getElementById('backup-databases-btn').addEventListener('click', async 
     button.disabled = false;
   }
 });
+
+// Display last backup info from localStorage
+function updateLastBackupInfo() {
+  const lastBackupTime = localStorage.getItem('lastBackupTime');
+  const infoEl = document.getElementById('last-backup-info');
+  if (!infoEl) return;
+  if (lastBackupTime) {
+    const date = new Date(lastBackupTime);
+    infoEl.textContent = `Last backup: ${date.toLocaleString()}`;
+  } else {
+    infoEl.textContent = 'No backup recorded in this browser.';
+  }
+}
 
 // Export all data
 document.getElementById('export-all-btn').addEventListener('click', async () => {

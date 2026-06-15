@@ -1,0 +1,26 @@
+# Dependencies (will be installed in container)
+node_modules/
+
+# Runtime data (mounted as volumes)
+data/
+shared/
+
+# Sensitive files
+users.json
+settings.json
+.env
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation & screenshots
+screenshots/
+README.md
+LICENSE
+
+# Development files
+*.log
+*.md
+!package*.json

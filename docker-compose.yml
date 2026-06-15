@@ -5,7 +5,8 @@ services:
     ports:
       - "2452:2452"
     volumes:
-      # Persist note data (will be created by app if missing)
+      # Persist all data including notes, media, and system files (users.json, settings.json)
+      # users.json and settings.json are now stored in data/_system/ for Docker volume persistence
       - whiteboard-data:/app/data
       # Persist shared notes metadata (will be created by app if missing)
       - whiteboard-shared:/app/shared
