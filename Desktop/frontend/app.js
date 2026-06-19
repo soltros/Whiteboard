@@ -24,28 +24,82 @@ let tagTarget = null;
 let selectedNotes = new Set();
 let isMultiSelectMode = false;
 
-// Global fetch wrapper to handle session expiration
-const originalFetch = window.fetch;
-window.fetch = async function(...args) {
-  const response = await originalFetch(...args);
-
-  // If we get a 401 Unauthorized, the session has expired
-  // Don't redirect for auth endpoints (they're supposed to return 401)
-  if (response.status === 401 &&
-      !args[0].includes('/api/auth/login') &&
-      !args[0].includes('/api/shared/')) {
-    console.log('Session expired, redirecting to login...');
-
-    // Use handleSessionExpired if available, otherwise redirect directly
-    if (typeof handleSessionExpired === 'function') {
-      handleSessionExpired();
+// Global fetch wrapper to map calls through Go Wails bindings
+window.fetch = async function(url, options = {}) {
+  const method = options.method || 'GET';
+  const body = options.body || '';
+  const headers = options.headers || {};
+  
+  let responseText = '';
+  let status = 200;
+  
+  try {
+    if (url.startsWith('/api/auth/me')) {
+      responseText = await window.go.main.App.CheckAuth();
+    } else if (url.startsWith('/api/auth/login')) {
+      const payload = JSON.parse(body);
+      responseText = await window.go.main.App.Login(payload.serverUrl || '', payload.username, payload.password);
+    } else if (url.startsWith('/api/auth/logout')) {
+      responseText = await window.go.main.App.Logout();
+    } else if (url.startsWith('/api/files/new')) {
+      const payload = JSON.parse(body);
+      responseText = await window.go.main.App.NewFile(payload.name);
+    } else if (url.startsWith('/api/files')) {
+      responseText = await window.go.main.App.GetFiles();
+    } else if (url.startsWith('/api/file/verify-password/')) {
+      const noteId = url.replace('/api/file/verify-password/', '');
+      const payload = JSON.parse(body);
+      responseText = await window.go.main.App.VerifyPassword(noteId, payload.password);
+    } else if (url.startsWith('/api/file/metadata/')) {
+      const noteId = url.replace('/api/file/metadata/', '');
+      responseText = await window.go.main.App.UpdateMetadata(noteId, body);
+    } else if (url.startsWith('/api/file/')) {
+      const noteId = url.replace('/api/file/', '');
+      if (method === 'GET') {
+        const password = headers['x-note-password'] || '';
+        responseText = await window.go.main.App.GetFile(noteId, password);
+      } else if (method === 'POST') {
+        responseText = await window.go.main.App.SaveFile(noteId, body);
+      } else if (method === 'DELETE') {
+        responseText = await window.go.main.App.DeleteFile(noteId);
+      }
+    } else if (url.startsWith('/api/search')) {
+      const queryParams = url.split('?')[1] || '';
+      let q = '';
+      const qMatch = queryParams.match(/[?&]q=([^&]*)/);
+      if (qMatch) {
+        q = decodeURIComponent(qMatch[1]);
+      }
+      responseText = await window.go.main.App.SearchFiles(q);
+    } else if (url.includes('/upload')) {
+      status = 404;
+      responseText = JSON.stringify({ success: false, error: 'Not supported via fetch' });
     } else {
-      window.location.href = '/login.html';
+      // General endpoint fallback using proxy
+      responseText = await window.go.main.App.DoRequest(method, url, body, headers);
     }
-    return response;
+  } catch (err) {
+    status = 500;
+    responseText = JSON.stringify({ success: false, error: err.toString() });
   }
-
-  return response;
+  
+  try {
+    const data = JSON.parse(responseText);
+    if (data.success === false) {
+      if (data.error === 'Unauthorized' || data.error === 'Not authenticated') {
+        status = 401;
+      } else {
+        status = 400;
+      }
+    }
+  } catch (e) {}
+  
+  return {
+    ok: status >= 200 && status < 300,
+    status: status,
+    json: async () => JSON.parse(responseText),
+    text: async () => responseText
+  };
 };
 
 // Session validation interval (5 minutes)
@@ -85,20 +139,27 @@ async function checkAuth() {
   }
 }
 
-// Handle expired session
+// Handle expired session / login prompt
 function handleSessionExpired() {
   // Clear any timers
   if (sessionCheckInterval) {
     clearInterval(sessionCheckInterval);
   }
 
-  // Show a brief message before redirect
-  updateStatus('Session expired. Redirecting to login...');
+  updateStatus('Not logged in');
 
-  // Redirect to login after a brief delay
-  setTimeout(() => {
-    window.location.href = '/login.html';
-  }, 1000);
+  // Switch UI to login screen
+  document.getElementById('app-container').style.display = 'none';
+  document.getElementById('login-view').style.display = 'flex';
+
+  // Fill in stored server URL if it exists
+  if (window.go && window.go.main && window.go.main.App) {
+    window.go.main.App.GetServerURL().then(url => {
+      if (url) {
+        document.getElementById('server-url').value = url;
+      }
+    });
+  }
 }
 
 // Start periodic session validation
@@ -251,29 +312,31 @@ async function imageHandler(blob, callback) {
   // Show uploading status
   updateStatus('Uploading image...');
 
-  const formData = new FormData();
-  formData.append('image', blob);
+  const reader = new FileReader();
+  reader.readAsDataURL(blob);
+  reader.onloadend = async () => {
+    try {
+      const base64Data = reader.result.split(',')[1];
+      const fileName = blob.name || 'image.png';
 
-  try {
-    const response = await fetch(`/api/notes/${currentFilePath}/upload`, {
-      method: 'POST',
-      body: formData
-    });
+      const responseStr = await window.go.main.App.UploadImageBlob(currentFilePath, base64Data, fileName);
+      const data = JSON.parse(responseStr);
 
-    const data = await response.json();
-    if (data.success) {
-      // Return the image URL to Toast UI Editor
-      callback(data.url, blob.name || 'image');
-      updateStatus('Image uploaded');
-    } else {
-      await showAlert('Upload Failed', data.error || 'Failed to upload image');
+      if (data.success) {
+        const serverUrl = await window.go.main.App.GetServerURL();
+        const absoluteImageUrl = `${serverUrl}${data.url}`;
+        callback(absoluteImageUrl, blob.name || 'image');
+        updateStatus('Image uploaded');
+      } else {
+        await showAlert('Upload Failed', data.error || 'Failed to upload image');
+        updateStatus('Error uploading image');
+      }
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      await showAlert('Upload Failed', 'Failed to upload image');
       updateStatus('Error uploading image');
     }
-  } catch (error) {
-    console.error('Error uploading image:', error);
-    await showAlert('Upload Failed', 'Failed to upload image');
-    updateStatus('Error uploading image');
-  }
+  };
 }
 
 // Load files from server
@@ -470,7 +533,13 @@ async function openFile(filePath) {
         titleInput.value = currentFile.title;
       }
 
-      editor.setMarkdown(currentFile.markdown || '');
+      let markdown = currentFile.markdown || '';
+      window.go.main.App.GetServerURL().then(serverUrl => {
+        markdown = markdown.replaceAll('(/api/media/', `(${serverUrl}/api/media/`);
+        editor.setMarkdown(markdown);
+      }).catch(() => {
+        editor.setMarkdown(markdown);
+      });
       updateStatus('File loaded');
       updateWordCount();
 
@@ -827,7 +896,10 @@ async function saveCurrentFile() {
   if (!currentFilePath) return;
 
   try {
-    const markdown = editor.getMarkdown();
+    let markdown = editor.getMarkdown();
+    const serverUrl = await window.go.main.App.GetServerURL();
+    markdown = markdown.replaceAll(`(${serverUrl}/api/media/`, '(/api/media/');
+
     const title = document.getElementById('document-title').value || 'Untitled';
 
     const response = await fetch(`/api/file/${currentFilePath}`, {
@@ -2418,12 +2490,83 @@ function clearSelection() {
   });
 }
 
-// Initialize - check auth first, then load editor
-checkAuth().then(async isAuthenticated => {
-  if (isAuthenticated) {
-    // Start with collage view visible
-    showCollage();
-    await initEditor();
-    await loadFiles();
+// Desktop specific login submit handler
+async function handleDesktopLogin(e) {
+  e.preventDefault();
+
+  const serverUrl = document.getElementById('server-url').value.trim();
+  const username = document.getElementById('username-input').value.trim();
+  const password = document.getElementById('password-input').value;
+  const errorMessage = document.getElementById('error-message');
+  const submitBtn = document.getElementById('login-submit-btn');
+
+  if (!serverUrl || !username || !password) {
+    errorMessage.textContent = 'Please fill in all fields';
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Connecting...';
+  errorMessage.textContent = '';
+
+  try {
+    const responseStr = await window.go.main.App.Login(serverUrl, username, password);
+    const data = JSON.parse(responseStr);
+
+    if (data.success) {
+      document.getElementById('login-view').style.display = 'none';
+      document.getElementById('app-container').style.display = 'flex';
+
+      currentUser = data.user;
+      isAdmin = data.user.isAdmin;
+      updateUserInfo();
+      
+      showCollage();
+      await initEditor();
+      await loadFiles();
+      startSessionValidation();
+    } else {
+      errorMessage.textContent = data.error || 'Login failed';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Log In';
+    }
+  } catch (error) {
+    errorMessage.textContent = 'Connection error: ' + error.toString();
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Log In';
+  }
+}
+
+// Initialize on DOMContentLoaded for Wails lifecycle
+document.addEventListener('DOMContentLoaded', () => {
+  const loginForm = document.getElementById('login-form');
+  if (loginForm) {
+    loginForm.addEventListener('submit', handleDesktopLogin);
+  }
+
+  // Attempt auto-login using saved session
+  if (window.go && window.go.main && window.go.main.App) {
+    window.go.main.App.CheckAuth().then(async responseStr => {
+      const data = JSON.parse(responseStr);
+      if (data.success) {
+        document.getElementById('login-view').style.display = 'none';
+        document.getElementById('app-container').style.display = 'flex';
+        currentUser = data.user;
+        isAdmin = data.user.isAdmin;
+        updateUserInfo();
+
+        showCollage();
+        await initEditor();
+        await loadFiles();
+        startSessionValidation();
+      } else {
+        handleSessionExpired();
+      }
+    }).catch(() => {
+      handleSessionExpired();
+    });
+  } else {
+    // Development mockup / fallback
+    handleSessionExpired();
   }
 });

@@ -1074,6 +1074,22 @@ async function addUserToSystemIndex(userId) {
   }
 }
 
+// Remove user from system index
+async function removeUserFromSystemIndex(userId) {
+  try {
+    const indexContent = await fs.readFile(USERS_INDEX_FILE, 'utf-8');
+    const index = JSON.parse(indexContent);
+
+    const indexPos = index.users.indexOf(userId);
+    if (indexPos !== -1) {
+      index.users.splice(indexPos, 1);
+      await fs.writeFile(USERS_INDEX_FILE, JSON.stringify(index, null, 2));
+    }
+  } catch (error) {
+    console.error('Error updating system index:', error);
+  }
+}
+
 // Load user database
 async function loadUserDatabase(userId) {
   const dbPath = getUserDatabasePath(userId);
@@ -1499,13 +1515,16 @@ app.delete('/api/admin/users/:username', requireAdmin, async (req, res) => {
     }
 
     // Delete user data directory
-    const userDataPath = path.join(__dirname, 'data', username);
+    const userDataPath = getUserDir(username);
     console.log(`Scrubbing user data: ${userDataPath}`);
     await deleteDirectory(userDataPath);
 
     // Remove user from users.json
     delete users[username];
     await saveUsers(users);
+
+    // Clean up users index
+    await removeUserFromSystemIndex(username);
 
     console.log(`User ${username} deleted and all data scrubbed successfully`);
     res.json({ success: true, message: `User ${username} and all their data has been permanently deleted` });
@@ -1717,6 +1736,10 @@ app.post('/api/admin/import', requireAdmin, backupUpload.single('backup'), async
     // Import users (merge with existing)
     const existingUsers = await loadUsers();
     for (const [username, userData] of Object.entries(backup.users)) {
+      if (!USERNAME_REGEX.test(username)) {
+        console.warn(`Skipping import of invalid username: ${username}`);
+        continue;
+      }
       if (!existingUsers[username]) {
         existingUsers[username] = userData;
         importedUsers++;
@@ -1732,7 +1755,7 @@ app.post('/api/admin/import', requireAdmin, backupUpload.single('backup'), async
       try {
         const existingIndex = JSON.parse(await fs.readFile(USERS_INDEX_FILE, 'utf-8'));
         for (const username of backup.usersIndex.users || []) {
-          if (!existingIndex.users.includes(username)) {
+          if (USERNAME_REGEX.test(username) && !existingIndex.users.includes(username)) {
             existingIndex.users.push(username);
           }
         }
@@ -1744,6 +1767,10 @@ app.post('/api/admin/import', requireAdmin, backupUpload.single('backup'), async
 
     // Import user data (databases and notes)
     for (const [username, userData] of Object.entries(backup.userData)) {
+      if (!USERNAME_REGEX.test(username)) {
+        console.warn(`Skipping import data for invalid username: ${username}`);
+        continue;
+      }
       try {
         await ensureUserDir(username);
 
@@ -1753,6 +1780,7 @@ app.post('/api/admin/import', requireAdmin, backupUpload.single('backup'), async
 
           // Merge notes (don't overwrite existing ones)
           for (const [noteId, noteData] of Object.entries(userData.database.notes || {})) {
+            if (path.basename(noteId) !== noteId) continue;
             if (!existingDb.notes[noteId]) {
               existingDb.notes[noteId] = noteData;
               importedNotes++;
@@ -1765,6 +1793,7 @@ app.post('/api/admin/import', requireAdmin, backupUpload.single('backup'), async
         // Import note markdown files
         if (userData.notes) {
           for (const [noteId, markdown] of Object.entries(userData.notes)) {
+            if (path.basename(noteId) !== noteId) continue;
             const notePath = getNoteFilePath(username, noteId);
             try {
               await fs.access(notePath);
@@ -1880,7 +1909,7 @@ async function getNotesForUser(userId) {
 
       // Create a summary from markdown (first 100 characters)
       let summary = '';
-      if (markdown) {
+      if (markdown && !metadata.isPasswordProtected) {
         summary = markdown
           .replace(/[#*_~`\[\]]/g, '') // Remove markdown formatting
           .replace(/\n+/g, ' ') // Replace newlines with spaces
@@ -1940,8 +1969,10 @@ app.post('/api/file/metadata/:noteId', async (req, res) => {
     if (isPasswordProtected !== undefined) {
       data.isPasswordProtected = isPasswordProtected;
 
-      if (isPasswordProtected && password) {
+      if (isPasswordProtected && password && password !== '') {
         data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
+      } else if (isPasswordProtected && data.password) {
+        // Keep existing password
       } else if (!isPasswordProtected) {
         delete data.password;
       }
@@ -1966,11 +1997,17 @@ app.post('/api/file/verify-password/:noteId', async (req, res) => {
     const data = await readNoteData(userId, noteId);
 
     if (!data.isPasswordProtected || !data.password) {
-      return res.json({ success: true, valid: true });
+      const { password: _, ...safeData } = data;
+      return res.json({ success: true, valid: true, data: safeData });
     }
 
     const valid = await bcrypt.compare(password, data.password);
-    res.json({ success: true, valid });
+    if (valid) {
+      const { password: _, ...safeData } = data;
+      return res.json({ success: true, valid, data: safeData });
+    } else {
+      return res.json({ success: true, valid: false });
+    }
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -2070,7 +2107,36 @@ app.get('/api/file/:noteId', async (req, res) => {
     const userId = req.session.userId;
     const noteId = req.params.noteId;
     const data = await readNoteData(userId, noteId);
-    res.json({ success: true, data });
+
+    if (data.isPasswordProtected) {
+      // Check if a password is sent in the header (for direct fetches)
+      const requestPassword = req.headers['x-note-password'];
+      if (requestPassword) {
+        const valid = await bcrypt.compare(requestPassword, data.password);
+        if (valid) {
+          // Return complete data (without password hash)
+          const { password, ...safeData } = data;
+          return res.json({ success: true, data: safeData });
+        }
+      }
+
+      // If no password or invalid, return only metadata (no markdown, tags, or password hash)
+      return res.json({
+        success: true,
+        data: {
+          title: data.title,
+          isPasswordProtected: true,
+          createdAt: data.createdAt,
+          updatedAt: data.updatedAt,
+          shareId: data.shareId,
+          groups: data.groups || []
+        }
+      });
+    }
+
+    // Note is not password protected, return data without password hash
+    const { password, ...safeData } = data;
+    res.json({ success: true, data: safeData });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -2107,14 +2173,14 @@ app.post('/api/file/:noteId', async (req, res) => {
       }
 
       // Update password if provided, otherwise keep existing
-      if (isPasswordProtected && password) {
+      if (isPasswordProtected && password && password !== '') {
         data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
       } else if (isPasswordProtected && existingData.password) {
         data.password = existingData.password;
       }
     } catch {
       // New file - hash password if provided
-      if (isPasswordProtected && password) {
+      if (isPasswordProtected && password && password !== '') {
         data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
       }
     }
@@ -2405,13 +2471,15 @@ async function searchNotes(userId, query) {
         tag.toLowerCase().includes(query)
       );
 
-      if (metadata.title.toLowerCase().includes(query) ||
-          (markdown && markdown.toLowerCase().includes(query)) ||
-          tagsMatch) {
+      const matchesTitle = metadata.title.toLowerCase().includes(query);
+      const matchesTags = tagsMatch;
+      const matchesContent = !metadata.isPasswordProtected && markdown && markdown.toLowerCase().includes(query);
+
+      if (matchesTitle || matchesTags || matchesContent) {
         results.push({
           name: metadata.title,
           path: noteId,
-          preview: markdown ? markdown.substring(0, 100) : '',
+          preview: (metadata.isPasswordProtected || !markdown) ? '' : markdown.substring(0, 100),
           tags: metadata.tags || []
         });
       }
