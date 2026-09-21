@@ -34,7 +34,7 @@ Whiteboard is built on the principle that your notes should belong to you. No su
 
 ### Sharing & Security
 - **Shareable Links**: Generate public links for individual notes
-- **Password Protection**: Optional password protection for notes
+- **Password-Gated Notes**: Optional password gate for opening notes in Whiteboard (note Markdown remains plaintext on disk)
 - **Share Management**: View and revoke active share links
 - **Session Security**: Automatic session validation and timeout handling
 - **Privacy Controls**: Toggle preview visibility for sensitive environments
@@ -411,7 +411,9 @@ Pure markdown content here...
 ### Password Storage
 
 - User passwords are hashed with bcrypt
-- Note passwords are hashed separately per note
+- Note access passwords are hashed separately per note
+- Password protection is an application-level access gate; note Markdown is **not encrypted at rest**
+- Anyone with access to the Whiteboard data volume or backups can read the underlying Markdown files
 - Session cookies are HTTP-only and signed
 
 ## Keyboard Shortcuts
