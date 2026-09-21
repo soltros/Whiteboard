@@ -249,7 +249,7 @@ async function initializeDemoNotes() {
         title: 'Welcome to Whiteboard',
         markdown: `# Welcome to Whiteboard
 
-Whiteboard is a **free, open-source note-taking application** designed to keep your notes sovereign and under your control. No subscriptions, no data mining, no vendor lock-in—just a clean, distraction-free writing experience.
+Whiteboard is a **free, open-source note-taking application** designed to keep your notes under your control. No subscriptions, no data mining, no vendor lock-in—just a clean, distraction-free writing experience.
 
 ## What is Whiteboard?
 
@@ -258,7 +258,7 @@ Whiteboard is built on the principle that **your notes belong to you**. Period.
 - **Self-hosted**: Run it on your own server, not someone else's cloud
 - **Open source**: Inspect, modify, and contribute to the code
 - **Free forever**: No premium tiers, no feature paywalls
-- **Privacy-first**: Your data stays on your server, encrypted at rest
+- **Privacy-first**: Your data stays on infrastructure you control
 - **No tracking**: We don't collect analytics, telemetry, or usage data
 
 ## Core Philosophy
@@ -280,8 +280,8 @@ Write in plain Markdown with live preview and syntax highlighting. Use the toolb
 ### 🏷️ Tags & Groups
 Organize notes with tags and groups. Search by tag, filter by group, or browse everything in one view.
 
-### 🔒 Privacy Mode
-Password-protect sensitive notes with client-side encryption. Only you can decrypt them.
+### 🔒 Password-Gated Notes
+Add an application-level password gate to sensitive notes. Note Markdown remains plaintext on disk, so protect your server and backups accordingly.
 
 ### 🔗 Sharing
 Generate public share links for notes you want to publish. Full control over what's shared.
