@@ -1249,6 +1249,7 @@ function recordFailedAttempt(ip, store = loginAttempts) {
     store.set(ip, { count: 1, timestamp: Date.now() });
   } else {
     record.count++;
+    record.timestamp = Date.now();
   }
 }
 
@@ -1283,7 +1284,7 @@ app.post('/api/auth/login', async (req, res) => {
     // Rotate the session identifier after authentication to prevent session fixation.
     await new Promise((resolve, reject) => req.session.regenerate(err => err ? reject(err) : resolve()));
     req.session.userId = username;
-    req.session.isAdmin = user.isAdmin || false;
+    req.session.isAdmin = user.isAdmin === true;
     loginAttempts.delete(ip);
 
     res.json({
@@ -1446,6 +1447,7 @@ app.put('/api/admin/users/:username', requireAdmin, async (req, res) => {
   try {
     const { username } = req.params;
     const { password, isAdmin } = req.body;
+    if (!USERNAME_REGEX.test(username)) return res.status(400).json({ success: false, error: 'Invalid username' });
 
     const users = await loadUsers();
 
@@ -1498,6 +1500,7 @@ async function deleteDirectory(dirPath) {
 app.delete('/api/admin/users/:username', requireAdmin, async (req, res) => {
   try {
     const { username } = req.params;
+    if (!USERNAME_REGEX.test(username)) return res.status(400).json({ success: false, error: 'Invalid username' });
 
     if (username === 'admin') {
       return res.status(400).json({ success: false, error: 'Cannot delete admin account' });
