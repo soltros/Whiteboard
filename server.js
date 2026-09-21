@@ -1987,12 +1987,14 @@ app.post('/api/file/metadata/:noteId', async (req, res) => {
 
     // Update tags
     if (tags !== undefined) {
-      data.tags = tags;
+      if (!Array.isArray(tags) || tags.some(tag => typeof tag !== 'string')) return res.status(400).json({ success: false, error: 'tags must be an array of strings' });
+      data.tags = tags.slice(0, 100).map(tag => tag.slice(0, 100));
     }
 
     // Update groups
     if (groups !== undefined) {
-      data.groups = groups;
+      if (!Array.isArray(groups) || groups.some(group => typeof group !== 'string')) return res.status(400).json({ success: false, error: 'groups must be an array of strings' });
+      data.groups = groups.slice(0, 100).map(group => group.slice(0, 100));
     }
 
     // Update password protection
@@ -2181,38 +2183,30 @@ app.post('/api/file/:noteId', async (req, res) => {
 
     await ensureUserDir(userId);
 
+    let existingData = null;
+    try { existingData = await readNoteData(userId, noteId); } catch { /* new note */ }
+
+    if (title !== undefined && typeof title !== 'string') return res.status(400).json({ success: false, error: 'title must be a string' });
+    if (markdown !== undefined && typeof markdown !== 'string') return res.status(400).json({ success: false, error: 'markdown must be a string' });
+    if (tags !== undefined && (!Array.isArray(tags) || tags.some(tag => typeof tag !== 'string'))) return res.status(400).json({ success: false, error: 'tags must be an array of strings' });
+    if (groups !== undefined && (!Array.isArray(groups) || groups.some(group => typeof group !== 'string'))) return res.status(400).json({ success: false, error: 'groups must be an array of strings' });
+    if (isPasswordProtected !== undefined && typeof isPasswordProtected !== 'boolean') return res.status(400).json({ success: false, error: 'isPasswordProtected must be a boolean' });
+
+    const protectionEnabled = isPasswordProtected !== undefined ? isPasswordProtected : !!existingData?.isPasswordProtected;
     const data = {
-      title: title || 'Untitled',
-      markdown,
-      tags: tags || [],
-      groups: groups || [],
-      isPasswordProtected: isPasswordProtected || false,
-      createdAt: new Date().toISOString(),
+      title: title !== undefined ? title.trim().slice(0, 300) || 'Untitled' : (existingData?.title || 'Untitled'),
+      markdown: markdown !== undefined ? markdown : (existingData?.markdown || ''),
+      tags: tags !== undefined ? tags.slice(0, 100).map(tag => tag.slice(0, 100)) : (existingData?.tags || []),
+      groups: groups !== undefined ? groups.slice(0, 100).map(group => group.slice(0, 100)) : (existingData?.groups || []),
+      isPasswordProtected: protectionEnabled,
+      createdAt: existingData?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-
-    // If file exists, preserve createdAt, shareId, groups, and password if not updating
-    try {
-      const existingData = await readNoteData(userId, noteId);
-      data.createdAt = existingData.createdAt;
-      data.shareId = existingData.shareId;
-
-      // Preserve existing groups if not provided in request
-      if (!groups) {
-        data.groups = existingData.groups || [];
-      }
-
-      // Update password if provided, otherwise keep existing
-      if (isPasswordProtected && password && password !== '') {
-        data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-      } else if (isPasswordProtected && existingData.password) {
-        data.password = existingData.password;
-      }
-    } catch {
-      // New file - hash password if provided
-      if (isPasswordProtected && password && password !== '') {
-        data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-      }
+    if (existingData?.shareId) data.shareId = existingData.shareId;
+    if (protectionEnabled) {
+      if (password) data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
+      else if (existingData?.password) data.password = existingData.password;
+      else return res.status(400).json({ success: false, error: 'A password is required to enable note protection' });
     }
 
     await writeNoteDataSafe(userId, noteId, data);
