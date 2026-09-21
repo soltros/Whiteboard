@@ -136,7 +136,7 @@ function updateUserInfo() {
   const userInfo = document.getElementById('user-info');
   if (userInfo) {
     userInfo.innerHTML = `
-      <span class="username">${currentUser}</span>
+      <span class="username">${escapeHtml(currentUser)}</span>
       ${isAdmin ? '<button id="admin-btn" class="btn-admin">Admin Panel</button>' : ''}
       <button id="logout-btn" class="btn-logout-small">Logout</button>
     `;
@@ -1003,10 +1003,13 @@ function addTagToContainer(tag) {
   const tagsContainer = document.getElementById('tags-container');
   const tagEl = document.createElement('div');
   tagEl.className = 'tag-item';
-  tagEl.innerHTML = `
-    <span>${tag}</span>
-    <span class="tag-remove" onclick="removeTag(this)">×</span>
-  `;
+  const label = document.createElement('span');
+  label.textContent = tag;
+  const remove = document.createElement('span');
+  remove.className = 'tag-remove';
+  remove.textContent = '×';
+  remove.addEventListener('click', () => removeTag(remove));
+  tagEl.append(label, remove);
   tagsContainer.appendChild(tagEl);
 }
 
