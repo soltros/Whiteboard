@@ -1229,23 +1229,24 @@ async function writeNoteData(userId, noteId, data) {
 
 // Rate limiting state
 const loginAttempts = new Map();
+const notePasswordAttempts = new Map();
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_TIME = 15 * 60 * 1000; // 15 minutes
 
-function checkRateLimit(ip) {
-  const record = loginAttempts.get(ip);
+function checkRateLimit(ip, store = loginAttempts) {
+  const record = store.get(ip);
   if (!record) return true;
   if (Date.now() - record.timestamp > LOCKOUT_TIME) {
-    loginAttempts.delete(ip);
+    store.delete(ip);
     return true;
   }
   return record.count < MAX_LOGIN_ATTEMPTS;
 }
 
-function recordFailedAttempt(ip) {
-  const record = loginAttempts.get(ip);
+function recordFailedAttempt(ip, store = loginAttempts) {
+  const record = store.get(ip);
   if (!record || Date.now() - record.timestamp > LOCKOUT_TIME) {
-    loginAttempts.set(ip, { count: 1, timestamp: Date.now() });
+    store.set(ip, { count: 1, timestamp: Date.now() });
   } else {
     record.count++;
   }
@@ -2035,15 +2036,19 @@ app.post('/api/file/verify-password/:noteId', async (req, res) => {
       return res.json({ success: true, valid: true, data: safeData });
     }
 
-    const valid = await bcrypt.compare(password, data.password);
+    const attemptKey = `note:${userId}:${noteId}:${req.ip || req.socket.remoteAddress}`;
+    if (!checkRateLimit(attemptKey, notePasswordAttempts)) return res.status(429).json({ success: false, error: 'Too many failed attempts. Please try again later.' });
+    const valid = await bcrypt.compare(typeof password === 'string' ? password : '', data.password);
     if (valid) {
+      notePasswordAttempts.delete(attemptKey);
       const { password: _, ...safeData } = data;
       return res.json({ success: true, valid, data: safeData });
     } else {
+      recordFailedAttempt(attemptKey, notePasswordAttempts);
       return res.json({ success: true, valid: false });
     }
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Unable to verify note password' });
   }
 });
 
@@ -2223,13 +2228,14 @@ app.post('/api/files/new', async (req, res) => {
   try {
     const userId = req.session.userId;
     const { name } = req.body;
+    if (name !== undefined && typeof name !== 'string') return res.status(400).json({ success: false, error: 'name must be a string' });
 
     await ensureUserDir(userId);
 
     const noteId = generateNoteId();
 
     const data = {
-      title: name || 'Untitled',
+      title: name ? name.trim().slice(0, 300) || 'Untitled' : 'Untitled',
       markdown: '',
       tags: [],
       groups: [],
@@ -2252,8 +2258,8 @@ app.post('/api/notes/import', async (req, res) => {
     const userId = req.session.userId;
     const { title, content } = req.body;
 
-    if (!title || !content) {
-      return res.status(400).json({ success: false, error: 'Title and content are required' });
+    if (typeof title !== 'string' || typeof content !== 'string' || !title.trim() || !content) {
+      return res.status(400).json({ success: false, error: 'Title and content must be non-empty strings' });
     }
 
     await ensureUserDir(userId);
@@ -2261,7 +2267,7 @@ app.post('/api/notes/import', async (req, res) => {
     const noteId = generateNoteId();
 
     const data = {
-      title: title,
+      title: title.trim().slice(0, 300),
       markdown: content,
       tags: [],
       isPasswordProtected: false,
