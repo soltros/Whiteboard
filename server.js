@@ -1864,6 +1864,7 @@ app.post('/api/notes/:noteId/upload', uploadMiddleware, async (req, res) => {
     const userId = req.session.userId;
     const noteId = req.params.noteId;
     const filename = req.file.filename;
+    try { await readNoteData(userId, noteId); } catch { await fs.unlink(req.file.path).catch(() => {}); return res.status(404).json({ success: false, error: 'Note not found' }); }
 
     // Return the URL to access the image
     const imageUrl = `/api/media/${userId}/${noteId}/${filename}`;
@@ -1878,6 +1879,7 @@ app.post('/api/notes/:noteId/upload', uploadMiddleware, async (req, res) => {
 app.get('/api/media/:userId/:noteId/:filename', async (req, res) => {
   try {
     const { userId, noteId, filename } = req.params;
+    if (!USERNAME_REGEX.test(userId) || !/^[a-zA-Z0-9_-]{1,128}$/.test(noteId) || path.basename(filename) !== filename) return res.status(400).json({ success: false, error: 'Invalid media path' });
 
     // Security: ensure authenticated user can only access their own media
     // OR it's a shared note
@@ -1888,7 +1890,7 @@ app.get('/api/media/:userId/:noteId/:filename', async (req, res) => {
       try {
         const noteData = await readNoteData(userId, noteId);
 
-        if (!noteData.shareId) {
+        if (!noteData.shareId || noteData.isPasswordProtected) {
           return res.status(403).json({ success: false, error: 'Access denied' });
         }
       } catch {
