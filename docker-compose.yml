@@ -1,6 +1,6 @@
 services:
   whiteboard:
-    build: .
+    image: ghcr.io/soltros/whiteboard:latest
     container_name: whiteboard
     ports:
       - "2452:2452"
@@ -13,7 +13,9 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=2452
-      - SESSION_SECRET=${SESSION_SECRET:-change-this-secret-in-production}
+      - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - TRUST_PROXY=${TRUST_PROXY:-0}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:2452/login.html"]
