@@ -1,6 +1,4 @@
 const express = require('express');
-const helmet = require('helmet');
-const morgan = require('morgan');
 const session = require('express-session');
 const bcrypt = require('bcrypt');
 const fs = require('fs').promises;
@@ -10,6 +8,12 @@ const crypto = require('crypto');
 
 // Security constants
 const BCRYPT_SALT_ROUNDS = 12;
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const SESSION_SECRET = process.env.SESSION_SECRET;
+
+if (IS_PRODUCTION && (!SESSION_SECRET || SESSION_SECRET.length < 32)) {
+  throw new Error('SESSION_SECRET must be set to a random value of at least 32 characters in production');
+}
 
 // Per-user mutex to prevent race conditions on database operations
 const userMutexes = new Map();
@@ -26,6 +30,7 @@ async function withUserLock(userId, fn) {
     return await fn();
   } finally {
     releaseLock();
+    if (userMutexes.get(userId) === next) userMutexes.delete(userId);
   }
 }
 
@@ -39,24 +44,34 @@ const USERS_FILE = path.join(SYSTEM_DIR, 'users.json');
 const SETTINGS_FILE = path.join(SYSTEM_DIR, 'settings.json');
 const SHARED_DIR = path.join(__dirname, 'shared');
 
-// Session secret - in production, use environment variable
-const SESSION_SECRET = process.env.SESSION_SECRET || 'change-this-secret-in-production';
+// Never use a predictable production session secret. Development gets an ephemeral secret.
+const EFFECTIVE_SESSION_SECRET = SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 
 // Middleware
-app.use(helmet({
-  // Allow inline scripts needed by the app; tighten in production
-  contentSecurityPolicy: false
-}));
-app.use(morgan('combined'));
+app.disable('x-powered-by');
+if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://uicdn.toast.com; style-src 'self' 'unsafe-inline' https://uicdn.toast.com; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Frame-Options', 'DENY');
+  next();
+});
+app.use((req, res, next) => {
+  const started = Date.now();
+  res.on('finish', () => console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - started}ms`));
+  next();
+});
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 app.use(session({
-  secret: SESSION_SECRET,
+  secret: EFFECTIVE_SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: false, // Set to true in production with HTTPS
+    secure: IS_PRODUCTION ? 'auto' : false,
     httpOnly: true,
+    sameSite: 'lax',
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
 }));
@@ -85,9 +100,10 @@ const upload = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|webp|svg/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
+    const allowedExtensions = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
+    const allowedMimeTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+    const extname = allowedExtensions.has(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedMimeTypes.has(file.mimetype.toLowerCase());
 
     if (mimetype && extname) {
       return cb(null, true);
@@ -119,6 +135,9 @@ app.use((req, res, next) => {
       req.path === '/login.html' ||
       req.path === '/login.css' ||
       req.path === '/login.js' ||
+      req.path === '/shared.html' ||
+      req.path === '/shared.js' ||
+      req.path.startsWith('/shared/') ||
       req.path.startsWith('/api/shared/') ||
       req.path.startsWith('/api/media/')) {
     return next();
@@ -137,7 +156,7 @@ app.use((req, res, next) => {
 });
 
 // Serve static files
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Migrate users.json/settings.json from old location to new _system/ location
 async function migrateSystemFiles() {
@@ -165,9 +184,12 @@ async function initializeUsers() {
   try {
     await fs.access(USERS_FILE);
   } catch {
-    // Create default admin account
-    // Password: admin123 (CHANGE THIS IN PRODUCTION!)
-    const adminPassword = await bcrypt.hash('admin123', BCRYPT_SALT_ROUNDS);
+    // Bootstrap credentials must be explicitly supplied; never create a known default password.
+    const bootstrapPassword = process.env.ADMIN_PASSWORD;
+    if (!bootstrapPassword || bootstrapPassword.length < 12) {
+      throw new Error('No users database exists. Set ADMIN_PASSWORD to a password of at least 12 characters for first startup.');
+    }
+    const adminPassword = await bcrypt.hash(bootstrapPassword, BCRYPT_SALT_ROUNDS);
     const users = {
       admin: {
         username: 'admin',
@@ -177,7 +199,7 @@ async function initializeUsers() {
       }
     };
     await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
-    console.log('Admin account created - Username: admin, Password: admin123');
+    console.log('Initial admin account created. Remove ADMIN_PASSWORD from the environment after first startup.');
   }
 }
 
@@ -205,7 +227,7 @@ async function loadSettings() {
 
 // Save settings to file
 async function saveSettings(settings) {
-  await fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  await atomicWriteFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
 }
 
 // Initialize demo notes for admin
@@ -226,7 +248,7 @@ async function initializeDemoNotes() {
         title: 'Welcome to Whiteboard',
         markdown: `# Welcome to Whiteboard
 
-Whiteboard is a **free, open-source note-taking application** designed to keep your notes sovereign and under your control. No subscriptions, no data mining, no vendor lock-in—just a clean, distraction-free writing experience.
+Whiteboard is a **free, open-source note-taking application** designed to keep your notes under your control. No subscriptions, no data mining, no vendor lock-in—just a clean, distraction-free writing experience.
 
 ## What is Whiteboard?
 
@@ -235,7 +257,7 @@ Whiteboard is built on the principle that **your notes belong to you**. Period.
 - **Self-hosted**: Run it on your own server, not someone else's cloud
 - **Open source**: Inspect, modify, and contribute to the code
 - **Free forever**: No premium tiers, no feature paywalls
-- **Privacy-first**: Your data stays on your server, encrypted at rest
+- **Privacy-first**: Your data stays on infrastructure you control
 - **No tracking**: We don't collect analytics, telemetry, or usage data
 
 ## Core Philosophy
@@ -257,8 +279,8 @@ Write in plain Markdown with live preview and syntax highlighting. Use the toolb
 ### 🏷️ Tags & Groups
 Organize notes with tags and groups. Search by tag, filter by group, or browse everything in one view.
 
-### 🔒 Privacy Mode
-Password-protect sensitive notes with client-side encryption. Only you can decrypt them.
+### 🔒 Password-Gated Notes
+Add an application-level password gate to sensitive notes. Note Markdown remains plaintext on disk, so protect your server and backups accordingly.
 
 ### 🔗 Sharing
 Generate public share links for notes you want to publish. Full control over what's shared.
@@ -989,7 +1011,7 @@ async function loadUsers() {
 
 // Save users to file
 async function saveUsers(users) {
-  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
+  await atomicWriteFile(USERS_FILE, JSON.stringify(users, null, 2));
 }
 
 // Ensure data directory exists
@@ -1067,7 +1089,7 @@ async function addUserToSystemIndex(userId) {
 
     if (!index.users.includes(userId)) {
       index.users.push(userId);
-      await fs.writeFile(USERS_INDEX_FILE, JSON.stringify(index, null, 2));
+      await atomicWriteFile(USERS_INDEX_FILE, JSON.stringify(index, null, 2));
     }
   } catch (error) {
     console.error('Error updating system index:', error);
@@ -1083,7 +1105,7 @@ async function removeUserFromSystemIndex(userId) {
     const indexPos = index.users.indexOf(userId);
     if (indexPos !== -1) {
       index.users.splice(indexPos, 1);
-      await fs.writeFile(USERS_INDEX_FILE, JSON.stringify(index, null, 2));
+      await atomicWriteFile(USERS_INDEX_FILE, JSON.stringify(index, null, 2));
     }
   } catch (error) {
     console.error('Error updating system index:', error);
@@ -1102,9 +1124,15 @@ async function loadUserDatabase(userId) {
 }
 
 // Save user database (always use withUserLock to prevent race conditions)
+async function atomicWriteFile(filePath, content) {
+  const tmpPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  await fs.writeFile(tmpPath, content, { mode: 0o600 });
+  await fs.rename(tmpPath, filePath);
+}
+
 async function saveUserDatabase(userId, database) {
   const dbPath = getUserDatabasePath(userId);
-  await fs.writeFile(dbPath, JSON.stringify(database, null, 2));
+  await atomicWriteFile(dbPath, JSON.stringify(database, null, 2));
 }
 
 // Write note data atomically using per-user mutex
@@ -1194,32 +1222,34 @@ async function writeNoteData(userId, noteId, data) {
 
   // Write markdown file
   const notePath = getNoteFilePath(userId, noteId);
-  await fs.writeFile(notePath, markdown || '');
+  await atomicWriteFile(notePath, markdown || '');
 }
 
 // AUTH ROUTES
 
 // Rate limiting state
 const loginAttempts = new Map();
+const notePasswordAttempts = new Map();
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_TIME = 15 * 60 * 1000; // 15 minutes
 
-function checkRateLimit(ip) {
-  const record = loginAttempts.get(ip);
+function checkRateLimit(ip, store = loginAttempts) {
+  const record = store.get(ip);
   if (!record) return true;
   if (Date.now() - record.timestamp > LOCKOUT_TIME) {
-    loginAttempts.delete(ip);
+    store.delete(ip);
     return true;
   }
   return record.count < MAX_LOGIN_ATTEMPTS;
 }
 
-function recordFailedAttempt(ip) {
-  const record = loginAttempts.get(ip);
+function recordFailedAttempt(ip, store = loginAttempts) {
+  const record = store.get(ip);
   if (!record || Date.now() - record.timestamp > LOCKOUT_TIME) {
-    loginAttempts.set(ip, { count: 1, timestamp: Date.now() });
+    store.set(ip, { count: 1, timestamp: Date.now() });
   } else {
     record.count++;
+    record.timestamp = Date.now();
   }
 }
 
@@ -1251,9 +1281,11 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
-    // Set session
+    // Rotate the session identifier after authentication to prevent session fixation.
+    await new Promise((resolve, reject) => req.session.regenerate(err => err ? reject(err) : resolve()));
     req.session.userId = username;
-    req.session.isAdmin = user.isAdmin || false;
+    req.session.isAdmin = user.isAdmin === true;
+    loginAttempts.delete(ip);
 
     res.json({
       success: true,
@@ -1305,8 +1337,8 @@ app.post('/api/auth/change-password', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Current and new passwords are required' });
   }
 
-  if (newPassword.length < 6) {
-    return res.status(400).json({ success: false, error: 'New password must be at least 6 characters' });
+  if (typeof newPassword !== 'string' || newPassword.length < 12) {
+    return res.status(400).json({ success: false, error: 'New password must be at least 12 characters' });
   }
 
   try {
@@ -1378,8 +1410,8 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Username must be 3-30 characters and contain only letters, numbers, underscores, and hyphens' });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+    if (typeof password !== 'string' || password.length < 12) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 12 characters' });
     }
 
     const users = await loadUsers();
@@ -1394,7 +1426,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     users[username] = {
       username,
       password: hashedPassword,
-      isAdmin: isAdmin || false,
+      isAdmin: isAdmin === true,
       createdAt: new Date().toISOString()
     };
 
@@ -1403,7 +1435,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     // Create user directory
     await ensureUserDir(username);
 
-    res.json({ success: true, user: { username, isAdmin: isAdmin || false } });
+    res.json({ success: true, user: { username, isAdmin: isAdmin === true } });
   } catch (error) {
     console.error('Error creating user:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
@@ -1415,6 +1447,7 @@ app.put('/api/admin/users/:username', requireAdmin, async (req, res) => {
   try {
     const { username } = req.params;
     const { password, isAdmin } = req.body;
+    if (!USERNAME_REGEX.test(username)) return res.status(400).json({ success: false, error: 'Invalid username' });
 
     const users = await loadUsers();
 
@@ -1432,8 +1465,8 @@ app.put('/api/admin/users/:username', requireAdmin, async (req, res) => {
 
     // Update password if provided
     if (password) {
-      if (password.length < 6) {
-        return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+      if (typeof password !== 'string' || password.length < 12) {
+        return res.status(400).json({ success: false, error: 'Password must be at least 12 characters' });
       }
       users[username].password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
     }
@@ -1467,6 +1500,7 @@ async function deleteDirectory(dirPath) {
 app.delete('/api/admin/users/:username', requireAdmin, async (req, res) => {
   try {
     const { username } = req.params;
+    if (!USERNAME_REGEX.test(username)) return res.status(400).json({ success: false, error: 'Invalid username' });
 
     if (username === 'admin') {
       return res.status(400).json({ success: false, error: 'Cannot delete admin account' });
@@ -1552,11 +1586,16 @@ app.put('/api/admin/settings', requireAdmin, async (req, res) => {
   try {
     const { publicUrlBase } = req.body;
 
-    if (!publicUrlBase) {
+    if (typeof publicUrlBase !== 'string' || !publicUrlBase.trim()) {
       return res.status(400).json({ success: false, error: 'Public URL base is required' });
     }
+    let parsedPublicUrl;
+    try { parsedPublicUrl = new URL(publicUrlBase.trim()); } catch { return res.status(400).json({ success: false, error: 'Public URL base must be a valid URL' }); }
+    if (!['http:', 'https:'].includes(parsedPublicUrl.protocol) || parsedPublicUrl.username || parsedPublicUrl.password) {
+      return res.status(400).json({ success: false, error: 'Public URL base must use HTTP or HTTPS without embedded credentials' });
+    }
 
-    await saveSettings({ publicUrlBase });
+    await saveSettings({ publicUrlBase: parsedPublicUrl.toString().replace(/\/$/, '') });
     res.json({ success: true });
   } catch (error) {
     console.error('Error updating settings:', error);
@@ -1834,6 +1873,7 @@ app.post('/api/notes/:noteId/upload', uploadMiddleware, async (req, res) => {
     const userId = req.session.userId;
     const noteId = req.params.noteId;
     const filename = req.file.filename;
+    try { await readNoteData(userId, noteId); } catch { await fs.unlink(req.file.path).catch(() => {}); return res.status(404).json({ success: false, error: 'Note not found' }); }
 
     // Return the URL to access the image
     const imageUrl = `/api/media/${userId}/${noteId}/${filename}`;
@@ -1848,6 +1888,7 @@ app.post('/api/notes/:noteId/upload', uploadMiddleware, async (req, res) => {
 app.get('/api/media/:userId/:noteId/:filename', async (req, res) => {
   try {
     const { userId, noteId, filename } = req.params;
+    if (!USERNAME_REGEX.test(userId) || !/^[a-zA-Z0-9_-]{1,128}$/.test(noteId) || path.basename(filename) !== filename) return res.status(400).json({ success: false, error: 'Invalid media path' });
 
     // Security: ensure authenticated user can only access their own media
     // OR it's a shared note
@@ -1858,7 +1899,7 @@ app.get('/api/media/:userId/:noteId/:filename', async (req, res) => {
       try {
         const noteData = await readNoteData(userId, noteId);
 
-        if (!noteData.shareId) {
+        if (!noteData.shareId || (noteData.isPasswordProtected && !req.session.sharedNotes?.[noteData.shareId])) {
           return res.status(403).json({ success: false, error: 'Access denied' });
         }
       } catch {
@@ -1957,12 +1998,14 @@ app.post('/api/file/metadata/:noteId', async (req, res) => {
 
     // Update tags
     if (tags !== undefined) {
-      data.tags = tags;
+      if (!Array.isArray(tags) || tags.some(tag => typeof tag !== 'string')) return res.status(400).json({ success: false, error: 'tags must be an array of strings' });
+      data.tags = tags.slice(0, 100).map(tag => tag.slice(0, 100));
     }
 
     // Update groups
     if (groups !== undefined) {
-      data.groups = groups;
+      if (!Array.isArray(groups) || groups.some(group => typeof group !== 'string')) return res.status(400).json({ success: false, error: 'groups must be an array of strings' });
+      data.groups = groups.slice(0, 100).map(group => group.slice(0, 100));
     }
 
     // Update password protection
@@ -2001,15 +2044,19 @@ app.post('/api/file/verify-password/:noteId', async (req, res) => {
       return res.json({ success: true, valid: true, data: safeData });
     }
 
-    const valid = await bcrypt.compare(password, data.password);
+    const attemptKey = `note:${userId}:${noteId}:${req.ip || req.socket.remoteAddress}`;
+    if (!checkRateLimit(attemptKey, notePasswordAttempts)) return res.status(429).json({ success: false, error: 'Too many failed attempts. Please try again later.' });
+    const valid = await bcrypt.compare(typeof password === 'string' ? password : '', data.password);
     if (valid) {
+      notePasswordAttempts.delete(attemptKey);
       const { password: _, ...safeData } = data;
       return res.json({ success: true, valid, data: safeData });
     } else {
+      recordFailedAttempt(attemptKey, notePasswordAttempts);
       return res.json({ success: true, valid: false });
     }
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Unable to verify note password' });
   }
 });
 
@@ -2050,7 +2097,7 @@ app.post('/api/file/share/:noteId', async (req, res) => {
       data.shareId = crypto.randomBytes(16).toString('hex');
       data.updatedAt = new Date().toISOString();
       
-      await writeNoteData(userId, noteId, data);
+      await writeNoteDataSafe(userId, noteId, data);
 
       // Create metadata file in shared directory
       await ensureSharedDir();
@@ -2092,7 +2139,7 @@ app.delete('/api/file/share/:noteId', async (req, res) => {
       // Remove shareId from note
       delete data.shareId;
       data.updatedAt = new Date().toISOString();
-      await writeNoteData(userId, noteId, data);
+      await writeNoteDataSafe(userId, noteId, data);
     }
 
     res.json({ success: true });
@@ -2151,38 +2198,30 @@ app.post('/api/file/:noteId', async (req, res) => {
 
     await ensureUserDir(userId);
 
+    let existingData = null;
+    try { existingData = await readNoteData(userId, noteId); } catch { /* new note */ }
+
+    if (title !== undefined && typeof title !== 'string') return res.status(400).json({ success: false, error: 'title must be a string' });
+    if (markdown !== undefined && typeof markdown !== 'string') return res.status(400).json({ success: false, error: 'markdown must be a string' });
+    if (tags !== undefined && (!Array.isArray(tags) || tags.some(tag => typeof tag !== 'string'))) return res.status(400).json({ success: false, error: 'tags must be an array of strings' });
+    if (groups !== undefined && (!Array.isArray(groups) || groups.some(group => typeof group !== 'string'))) return res.status(400).json({ success: false, error: 'groups must be an array of strings' });
+    if (isPasswordProtected !== undefined && typeof isPasswordProtected !== 'boolean') return res.status(400).json({ success: false, error: 'isPasswordProtected must be a boolean' });
+
+    const protectionEnabled = isPasswordProtected !== undefined ? isPasswordProtected : !!existingData?.isPasswordProtected;
     const data = {
-      title: title || 'Untitled',
-      markdown,
-      tags: tags || [],
-      groups: groups || [],
-      isPasswordProtected: isPasswordProtected || false,
-      createdAt: new Date().toISOString(),
+      title: title !== undefined ? title.trim().slice(0, 300) || 'Untitled' : (existingData?.title || 'Untitled'),
+      markdown: markdown !== undefined ? markdown : (existingData?.markdown || ''),
+      tags: tags !== undefined ? tags.slice(0, 100).map(tag => tag.slice(0, 100)) : (existingData?.tags || []),
+      groups: groups !== undefined ? groups.slice(0, 100).map(group => group.slice(0, 100)) : (existingData?.groups || []),
+      isPasswordProtected: protectionEnabled,
+      createdAt: existingData?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-
-    // If file exists, preserve createdAt, shareId, groups, and password if not updating
-    try {
-      const existingData = await readNoteData(userId, noteId);
-      data.createdAt = existingData.createdAt;
-      data.shareId = existingData.shareId;
-
-      // Preserve existing groups if not provided in request
-      if (!groups) {
-        data.groups = existingData.groups || [];
-      }
-
-      // Update password if provided, otherwise keep existing
-      if (isPasswordProtected && password && password !== '') {
-        data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-      } else if (isPasswordProtected && existingData.password) {
-        data.password = existingData.password;
-      }
-    } catch {
-      // New file - hash password if provided
-      if (isPasswordProtected && password && password !== '') {
-        data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-      }
+    if (existingData?.shareId) data.shareId = existingData.shareId;
+    if (protectionEnabled) {
+      if (password) data.password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
+      else if (existingData?.password) data.password = existingData.password;
+      else return res.status(400).json({ success: false, error: 'A password is required to enable note protection' });
     }
 
     await writeNoteDataSafe(userId, noteId, data);
@@ -2197,13 +2236,14 @@ app.post('/api/files/new', async (req, res) => {
   try {
     const userId = req.session.userId;
     const { name } = req.body;
+    if (name !== undefined && typeof name !== 'string') return res.status(400).json({ success: false, error: 'name must be a string' });
 
     await ensureUserDir(userId);
 
     const noteId = generateNoteId();
 
     const data = {
-      title: name || 'Untitled',
+      title: name ? name.trim().slice(0, 300) || 'Untitled' : 'Untitled',
       markdown: '',
       tags: [],
       groups: [],
@@ -2226,8 +2266,8 @@ app.post('/api/notes/import', async (req, res) => {
     const userId = req.session.userId;
     const { title, content } = req.body;
 
-    if (!title || !content) {
-      return res.status(400).json({ success: false, error: 'Title and content are required' });
+    if (typeof title !== 'string' || typeof content !== 'string' || !title.trim() || !content) {
+      return res.status(400).json({ success: false, error: 'Title and content must be non-empty strings' });
     }
 
     await ensureUserDir(userId);
@@ -2235,7 +2275,7 @@ app.post('/api/notes/import', async (req, res) => {
     const noteId = generateNoteId();
 
     const data = {
-      title: title,
+      title: title.trim().slice(0, 300),
       markdown: content,
       tags: [],
       isPasswordProtected: false,
@@ -2325,9 +2365,12 @@ app.delete('/api/file/:noteId', async (req, res) => {
       }
     }
 
-    // Delete from database
-    delete database.notes[noteId];
-    await saveUserDatabase(userId, database);
+    // Delete from database while holding the same per-user lock used by writes.
+    await withUserLock(userId, async () => {
+      const currentDatabase = await loadUserDatabase(userId);
+      delete currentDatabase.notes[noteId];
+      await saveUserDatabase(userId, currentDatabase);
+    });
 
     // Delete markdown file
     const notePath = getNoteFilePath(userId, noteId);
@@ -2370,8 +2413,9 @@ app.get('/shared/:shareId', (req, res) => {
 });
 
 // Shared note request handler (shared by GET and POST)
-async function handleSharedNoteRequest(shareId, password, res) {
+async function handleSharedNoteRequest(shareId, password, req, res, clientKey = 'unknown') {
   try {
+    if (!/^[a-f0-9]{32}$/.test(shareId)) return res.status(404).json({ success: false, error: 'Shared file not found' });
     // Get shared file metadata
     const sharedPath = path.join(SHARED_DIR, path.basename(shareId) + '.json');
     const sharedContent = await fs.readFile(sharedPath, 'utf-8');
@@ -2390,14 +2434,20 @@ async function handleSharedNoteRequest(shareId, password, res) {
         });
       }
 
+      const rateKey = `share:${shareId}:${clientKey}`;
+      if (!checkRateLimit(rateKey)) return res.status(429).json({ success: false, error: 'Too many failed attempts. Please try again later.', passwordRequired: true });
       const valid = await bcrypt.compare(password, fileData.password);
       if (!valid) {
+        recordFailedAttempt(rateKey);
         return res.status(401).json({
           success: false,
           error: 'Invalid password',
           passwordRequired: true
         });
       }
+      req.session.sharedNotes = req.session.sharedNotes || {};
+      req.session.sharedNotes[shareId] = true;
+      delete loginAttempts[rateKey];
     }
 
     // Return file data (without sensitive info)
@@ -2420,14 +2470,14 @@ async function handleSharedNoteRequest(shareId, password, res) {
 app.get('/api/shared/:shareId', async (req, res) => {
   const { shareId } = req.params;
   // Ignore any query-string password (legacy) — unprotected GET only
-  await handleSharedNoteRequest(shareId, null, res);
+  await handleSharedNoteRequest(shareId, null, req, res, req.ip || req.socket.remoteAddress);
 });
 
 // API: Access password-protected shared file — POST with password in body
 app.post('/api/shared/:shareId', async (req, res) => {
   const { shareId } = req.params;
   const { password } = req.body;
-  await handleSharedNoteRequest(shareId, password, res);
+  await handleSharedNoteRequest(shareId, password, req, res, req.ip || req.socket.remoteAddress);
 });
 
 // API: Search files
@@ -2437,7 +2487,10 @@ app.get('/api/search', async (req, res) => {
     const { q } = req.query;
 
     // Return empty results for empty/missing query instead of crashing
-    const query = (q || '').trim().toLowerCase();
+    if (typeof q !== 'string' || q.length > 500) {
+      return res.status(400).json({ success: false, error: 'Search query must be a string of at most 500 characters' });
+    }
+    const query = q.trim().toLowerCase();
     if (!query) {
       return res.json({ success: true, results: [] });
     }
@@ -2516,4 +2569,7 @@ Promise.all([ensureDataDir(), ensureSharedDir()]).then(async () => {
 
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+}).catch((error) => {
+  console.error('Fatal startup error:', error);
+  process.exit(1);
 });

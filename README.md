@@ -34,13 +34,13 @@ Whiteboard is built on the principle that your notes should belong to you. No su
 
 ### Sharing & Security
 - **Shareable Links**: Generate public links for individual notes
-- **Password Protection**: Optional password protection for notes
+- **Password-Gated Notes**: Optional password gate for opening notes in Whiteboard (note Markdown remains plaintext on disk)
 - **Share Management**: View and revoke active share links
 - **Session Security**: Automatic session validation and timeout handling
 - **Privacy Controls**: Toggle preview visibility for sensitive environments
 
 ### Media & Import/Export
-- **Image Support**: Upload and embed images (JPEG, PNG, GIF, WebP, SVG)
+- **Image Support**: Upload and embed images (JPEG, PNG, GIF, WebP)
 - **10MB Limit**: Per-image size limit for reasonable storage
 - **Markdown Import**: Import existing markdown files
 - **Bulk Export**: Export all notes as a ZIP archive of markdown files
@@ -68,12 +68,12 @@ Whiteboard is built on the principle that your notes should belong to you. No su
 ### Prerequisites
 
 - Docker and Docker Compose (recommended for production)
-- Node.js 18.x or higher (for local development only)
+- Node.js 20.x or higher (for local development only)
 - npm or yarn package manager (for local development only)
 
 ### Production Deployment (Recommended)
 
-The primary and recommended way to run Whiteboard is through Docker using the included Dockerfile and docker-compose.yml.
+The primary and recommended way to run Whiteboard is through Docker Compose. The included Compose file pulls the published GHCR image; the Dockerfile is used by CI to build that image.
 
 Quick start with Docker:
 ```bash
@@ -84,9 +84,7 @@ docker compose up -d
 
 Access the application at http://localhost:2452
 
-Default credentials:
-- Username: `admin`
-- Password: `admin123`
+On first startup, set `ADMIN_PASSWORD` to a strong password of at least 12 characters. Whiteboard no longer ships with default credentials.
 
 ### Local Development
 
@@ -100,7 +98,7 @@ cd Whiteboard
 
 2. Install dependencies:
 ```bash
-npm install
+npm ci
 ```
 
 3. Start the development server:
@@ -117,8 +115,11 @@ npm run dev
 Create a `.env` file in the project root:
 
 ```env
-# Session secret for cookie encryption (REQUIRED in production)
+# Session signing secret (REQUIRED in production; at least 32 random characters)
 SESSION_SECRET=your-secure-random-string-here
+
+# Required on first startup only; remove it after the admin account is created
+ADMIN_PASSWORD=choose-a-strong-bootstrap-password
 
 # Port to run the server on (default: 2452)
 PORT=2452
@@ -129,7 +130,7 @@ TZ=America/New_York
 
 #### Generating a Secure Session Secret
 
-The `SESSION_SECRET` is used to encrypt user session cookies. It must be a long, random string that is impossible to guess.
+The `SESSION_SECRET` is used to sign and authenticate the session cookie. It must be a long, random string that is impossible to guess.
 
 **Option 1: Using OpenSSL (Linux/Mac)**
 ```bash
@@ -258,12 +259,7 @@ Whiteboard/
 ├── package.json           # Node.js dependencies
 ├── Dockerfile             # Docker image configuration
 ├── docker-compose.yml     # Docker Compose configuration
-├── migrate-to-database.js # Migration script for database architecture
-├── MIGRATION.md           # Migration documentation
-├── DOCKER.md              # Docker deployment guide
-├── linux-app.md           # Native Linux app documentation
-├── android-app.md         # Native Android app documentation
-├── vscode-setup.md        # VSCode development setup guide
+├── Desktop/               # Wails/Go desktop client
 ├── public/                # Frontend static files
 │   ├── index.html         # Main application page
 │   ├── app.js             # Frontend JavaScript (Toast UI Editor)
@@ -274,19 +270,21 @@ Whiteboard/
 │   ├── admin.html         # Admin panel page
 │   ├── admin.js           # Admin functionality
 │   ├── admin.css          # Admin styles
+│   ├── shared.html        # Public shared-note viewer
+│   ├── shared.js          # Shared-note viewer logic
 │   └── favicon.svg        # Application icon
 ├── data/                  # User notes and media (runtime)
 │   ├── _system/           # System-level metadata
-│   │   └── users-index.json   # Tracks all users with data
+│   │   ├── users-index.json   # Tracks all users with data
+│   │   ├── users.json         # User accounts
+│   │   └── settings.json      # Application settings
 │   └── username/          # Per-user directory
 │       ├── database.json      # Per-user note index (fast lookups)
 │       └── notes/             # User's notes
 │           ├── note-id.md     # Markdown content files
 │           └── media/         # Media files
 │               └── note-id/   # Per-note media directory
-├── shared/                # Shared note metadata (runtime)
-├── users.json             # User accounts (created on first run)
-└── settings.json          # Application settings (created on first run)
+└── shared/                # Shared note metadata (runtime)
 ```
 
 ## Storage Architecture
@@ -386,8 +384,8 @@ Pure markdown content here...
 
 ### Production Deployment
 
-1. **Change Default Credentials**
-   - Immediately change the admin password after first login
+1. **Set a Strong Bootstrap Password**
+   - Set `ADMIN_PASSWORD` before the first startup and remove it from the environment after the admin account is created
 
 2. **Set Strong Session Secret**
    - Generate a strong random string for SESSION_SECRET
@@ -400,8 +398,7 @@ Pure markdown content here...
 4. **Regular Backups**
    - Backup the `data/` directory regularly
    - Backup `shared/` directory for share links
-   - Backup `users.json` for user accounts
-   - Backup `settings.json` for application settings
+   - `data/_system/users.json` and `data/_system/settings.json` are included when you back up `data/`
 
 5. **Keep Dependencies Updated**
    - Regularly run `npm audit` to check for vulnerabilities
@@ -410,7 +407,9 @@ Pure markdown content here...
 ### Password Storage
 
 - User passwords are hashed with bcrypt
-- Note passwords are hashed separately per note
+- Note access passwords are hashed separately per note
+- Password protection is an application-level access gate; note Markdown is **not encrypted at rest**
+- Anyone with access to the Whiteboard data volume or backups can read the underlying Markdown files
 - Session cookies are HTTP-only and signed
 
 ## Keyboard Shortcuts
@@ -428,27 +427,11 @@ Pure markdown content here...
 
 ## Native Applications
 
-### Android App (Coming Soon)
+### Desktop App
 
-A native Android application is in development using Kotlin and Jetpack Compose.
-**Features:**
-- Native Material Design 3 interface
-- Offline-first with local SQLite storage
-- Background sync with server
-- Native sharing integration
-- Biometric authentication support
+Whiteboard includes a Wails v2 desktop client in `Desktop/`. The client connects to a Whiteboard server over HTTP or HTTPS and stores its local connection/session configuration with user-only filesystem permissions.
 
-### Linux App (Coming Soon)
-
-A native Linux application is in development using Rust and GTK 4. 
-
-**Features:**
-- Native GTK 4 interface with libadwaita
-- Desktop integration (notifications, system tray)
-- Flatpak packaging for easy distribution
-- Offline-first with local storage
-- Background sync support
-
+Build the frontend assets with `npm ci && npm run build` from `Desktop/frontend/`, then build the Wails application from `Desktop/` with the Wails CLI and the platform dependencies required by Wails.
 
 
 ## Performance
@@ -471,9 +454,9 @@ If port 2452 is already in use:
 
 ### Cannot Login
 
-1. Check that `users.json` exists in project root
-2. Delete `users.json` to reset to default admin account
-3. Restart the server
+1. Check that `data/_system/users.json` exists and is readable by the container
+2. Check the container logs for authentication or filesystem errors
+3. If this is a fresh deployment, make sure `ADMIN_PASSWORD` was supplied for the first startup
 
 ### Share Links Not Working
 
