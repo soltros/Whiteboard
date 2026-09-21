@@ -36,5 +36,11 @@ jobs:
         with:
           go-version-file: Desktop/go.mod
           cache-dependency-path: Desktop/go.sum
-      - run: mkdir -p frontend/dist && cp frontend/index.html frontend/app.js frontend/styles.css frontend/dist/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: Desktop/frontend
+      - run: npm run build
+        working-directory: Desktop/frontend
       - run: go test ./...
