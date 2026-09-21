@@ -40,7 +40,7 @@ Whiteboard is built on the principle that your notes should belong to you. No su
 - **Privacy Controls**: Toggle preview visibility for sensitive environments
 
 ### Media & Import/Export
-- **Image Support**: Upload and embed images (JPEG, PNG, GIF, WebP, SVG)
+- **Image Support**: Upload and embed images (JPEG, PNG, GIF, WebP)
 - **10MB Limit**: Per-image size limit for reasonable storage
 - **Markdown Import**: Import existing markdown files
 - **Bulk Export**: Export all notes as a ZIP archive of markdown files
@@ -73,7 +73,7 @@ Whiteboard is built on the principle that your notes should belong to you. No su
 
 ### Production Deployment (Recommended)
 
-The primary and recommended way to run Whiteboard is through Docker using the included Dockerfile and docker-compose.yml.
+The primary and recommended way to run Whiteboard is through Docker Compose. The included Compose file pulls the published GHCR image; the Dockerfile is used by CI to build that image.
 
 Quick start with Docker:
 ```bash
@@ -84,9 +84,7 @@ docker compose up -d
 
 Access the application at http://localhost:2452
 
-Default credentials:
-- Username: `admin`
-- Password: `admin123`
+On first startup, set `ADMIN_PASSWORD` to a strong password of at least 12 characters. Whiteboard no longer ships with default credentials.
 
 ### Local Development
 
@@ -117,8 +115,11 @@ npm run dev
 Create a `.env` file in the project root:
 
 ```env
-# Session secret for cookie encryption (REQUIRED in production)
+# Session signing secret (REQUIRED in production; at least 32 random characters)
 SESSION_SECRET=your-secure-random-string-here
+
+# Required on first startup only; remove it after the admin account is created
+ADMIN_PASSWORD=choose-a-strong-bootstrap-password
 
 # Port to run the server on (default: 2452)
 PORT=2452
@@ -129,7 +130,7 @@ TZ=America/New_York
 
 #### Generating a Secure Session Secret
 
-The `SESSION_SECRET` is used to encrypt user session cookies. It must be a long, random string that is impossible to guess.
+The `SESSION_SECRET` is used to sign and authenticate the session cookie. It must be a long, random string that is impossible to guess.
 
 **Option 1: Using OpenSSL (Linux/Mac)**
 ```bash
@@ -386,8 +387,8 @@ Pure markdown content here...
 
 ### Production Deployment
 
-1. **Change Default Credentials**
-   - Immediately change the admin password after first login
+1. **Set a Strong Bootstrap Password**
+   - Set `ADMIN_PASSWORD` before the first startup and remove it from the environment after the admin account is created
 
 2. **Set Strong Session Secret**
    - Generate a strong random string for SESSION_SECRET
@@ -471,9 +472,9 @@ If port 2452 is already in use:
 
 ### Cannot Login
 
-1. Check that `users.json` exists in project root
-2. Delete `users.json` to reset to default admin account
-3. Restart the server
+1. Check that `data/_system/users.json` exists and is readable by the container
+2. Check the container logs for authentication or filesystem errors
+3. If this is a fresh deployment, make sure `ADMIN_PASSWORD` was supplied for the first startup
 
 ### Share Links Not Working
 
