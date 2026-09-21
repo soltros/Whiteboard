@@ -68,7 +68,7 @@ Whiteboard is built on the principle that your notes should belong to you. No su
 ### Prerequisites
 
 - Docker and Docker Compose (recommended for production)
-- Node.js 18.x or higher (for local development only)
+- Node.js 20.x or higher (for local development only)
 - npm or yarn package manager (for local development only)
 
 ### Production Deployment (Recommended)
@@ -98,7 +98,7 @@ cd Whiteboard
 
 2. Install dependencies:
 ```bash
-npm install
+npm ci
 ```
 
 3. Start the development server:
@@ -259,12 +259,7 @@ Whiteboard/
 ├── package.json           # Node.js dependencies
 ├── Dockerfile             # Docker image configuration
 ├── docker-compose.yml     # Docker Compose configuration
-├── migrate-to-database.js # Migration script for database architecture
-├── MIGRATION.md           # Migration documentation
-├── DOCKER.md              # Docker deployment guide
-├── linux-app.md           # Native Linux app documentation
-├── android-app.md         # Native Android app documentation
-├── vscode-setup.md        # VSCode development setup guide
+├── Desktop/               # Wails/Go desktop client
 ├── public/                # Frontend static files
 │   ├── index.html         # Main application page
 │   ├── app.js             # Frontend JavaScript (Toast UI Editor)
@@ -275,19 +270,21 @@ Whiteboard/
 │   ├── admin.html         # Admin panel page
 │   ├── admin.js           # Admin functionality
 │   ├── admin.css          # Admin styles
+│   ├── shared.html        # Public shared-note viewer
+│   ├── shared.js          # Shared-note viewer logic
 │   └── favicon.svg        # Application icon
 ├── data/                  # User notes and media (runtime)
 │   ├── _system/           # System-level metadata
-│   │   └── users-index.json   # Tracks all users with data
+│   │   ├── users-index.json   # Tracks all users with data
+│   │   ├── users.json         # User accounts
+│   │   └── settings.json      # Application settings
 │   └── username/          # Per-user directory
 │       ├── database.json      # Per-user note index (fast lookups)
 │       └── notes/             # User's notes
 │           ├── note-id.md     # Markdown content files
 │           └── media/         # Media files
 │               └── note-id/   # Per-note media directory
-├── shared/                # Shared note metadata (runtime)
-├── users.json             # User accounts (created on first run)
-└── settings.json          # Application settings (created on first run)
+└── shared/                # Shared note metadata (runtime)
 ```
 
 ## Storage Architecture
@@ -401,8 +398,7 @@ Pure markdown content here...
 4. **Regular Backups**
    - Backup the `data/` directory regularly
    - Backup `shared/` directory for share links
-   - Backup `users.json` for user accounts
-   - Backup `settings.json` for application settings
+   - `data/_system/users.json` and `data/_system/settings.json` are included when you back up `data/`
 
 5. **Keep Dependencies Updated**
    - Regularly run `npm audit` to check for vulnerabilities
@@ -431,27 +427,11 @@ Pure markdown content here...
 
 ## Native Applications
 
-### Android App (Coming Soon)
+### Desktop App
 
-A native Android application is in development using Kotlin and Jetpack Compose.
-**Features:**
-- Native Material Design 3 interface
-- Offline-first with local SQLite storage
-- Background sync with server
-- Native sharing integration
-- Biometric authentication support
+Whiteboard includes a Wails v2 desktop client in `Desktop/`. The client connects to a Whiteboard server over HTTP or HTTPS and stores its local connection/session configuration with user-only filesystem permissions.
 
-### Linux App (Coming Soon)
-
-A native Linux application is in development using Rust and GTK 4. 
-
-**Features:**
-- Native GTK 4 interface with libadwaita
-- Desktop integration (notifications, system tray)
-- Flatpak packaging for easy distribution
-- Offline-first with local storage
-- Background sync support
-
+Build the frontend assets with `npm ci && npm run build` from `Desktop/frontend/`, then build the Wails application from `Desktop/` with the Wails CLI and the platform dependencies required by Wails.
 
 
 ## Performance
