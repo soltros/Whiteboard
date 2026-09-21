@@ -32,6 +32,7 @@ async function withUserLock(userId, fn) {
     return await fn();
   } finally {
     releaseLock();
+    if (userMutexes.get(userId) === next) userMutexes.delete(userId);
   }
 }
 
@@ -227,7 +228,7 @@ async function loadSettings() {
 
 // Save settings to file
 async function saveSettings(settings) {
-  await fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  await atomicWriteFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
 }
 
 // Initialize demo notes for admin
@@ -1011,7 +1012,7 @@ async function loadUsers() {
 
 // Save users to file
 async function saveUsers(users) {
-  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
+  await atomicWriteFile(USERS_FILE, JSON.stringify(users, null, 2));
 }
 
 // Ensure data directory exists
@@ -1089,7 +1090,7 @@ async function addUserToSystemIndex(userId) {
 
     if (!index.users.includes(userId)) {
       index.users.push(userId);
-      await fs.writeFile(USERS_INDEX_FILE, JSON.stringify(index, null, 2));
+      await atomicWriteFile(USERS_INDEX_FILE, JSON.stringify(index, null, 2));
     }
   } catch (error) {
     console.error('Error updating system index:', error);
@@ -1105,7 +1106,7 @@ async function removeUserFromSystemIndex(userId) {
     const indexPos = index.users.indexOf(userId);
     if (indexPos !== -1) {
       index.users.splice(indexPos, 1);
-      await fs.writeFile(USERS_INDEX_FILE, JSON.stringify(index, null, 2));
+      await atomicWriteFile(USERS_INDEX_FILE, JSON.stringify(index, null, 2));
     }
   } catch (error) {
     console.error('Error updating system index:', error);
@@ -1583,11 +1584,16 @@ app.put('/api/admin/settings', requireAdmin, async (req, res) => {
   try {
     const { publicUrlBase } = req.body;
 
-    if (!publicUrlBase) {
+    if (typeof publicUrlBase !== 'string' || !publicUrlBase.trim()) {
       return res.status(400).json({ success: false, error: 'Public URL base is required' });
     }
+    let parsedPublicUrl;
+    try { parsedPublicUrl = new URL(publicUrlBase.trim()); } catch { return res.status(400).json({ success: false, error: 'Public URL base must be a valid URL' }); }
+    if (!['http:', 'https:'].includes(parsedPublicUrl.protocol) || parsedPublicUrl.username || parsedPublicUrl.password) {
+      return res.status(400).json({ success: false, error: 'Public URL base must use HTTP or HTTPS without embedded credentials' });
+    }
 
-    await saveSettings({ publicUrlBase });
+    await saveSettings({ publicUrlBase: parsedPublicUrl.toString().replace(/\/$/, '') });
     res.json({ success: true });
   } catch (error) {
     console.error('Error updating settings:', error);
