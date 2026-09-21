@@ -51,7 +51,7 @@ const EFFECTIVE_SESSION_SECRET = SESSION_SECRET || crypto.randomBytes(32).toStri
 app.disable('x-powered-by');
 if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
 app.use((req, res, next) => {
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://uicdn.toast.com; style-src 'self' 'unsafe-inline' https://uicdn.toast.com; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -135,6 +135,9 @@ app.use((req, res, next) => {
       req.path === '/login.html' ||
       req.path === '/login.css' ||
       req.path === '/login.js' ||
+      req.path === '/shared.html' ||
+      req.path === '/shared.js' ||
+      req.path.startsWith('/shared/') ||
       req.path.startsWith('/api/shared/') ||
       req.path.startsWith('/api/media/')) {
     return next();
@@ -1422,7 +1425,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     users[username] = {
       username,
       password: hashedPassword,
-      isAdmin: isAdmin || false,
+      isAdmin: isAdmin === true,
       createdAt: new Date().toISOString()
     };
 
@@ -1431,7 +1434,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     // Create user directory
     await ensureUserDir(username);
 
-    res.json({ success: true, user: { username, isAdmin: isAdmin || false } });
+    res.json({ success: true, user: { username, isAdmin: isAdmin === true } });
   } catch (error) {
     console.error('Error creating user:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
@@ -1893,7 +1896,7 @@ app.get('/api/media/:userId/:noteId/:filename', async (req, res) => {
       try {
         const noteData = await readNoteData(userId, noteId);
 
-        if (!noteData.shareId || noteData.isPasswordProtected) {
+        if (!noteData.shareId || (noteData.isPasswordProtected && !req.session.sharedNotes?.[noteData.shareId])) {
           return res.status(403).json({ success: false, error: 'Access denied' });
         }
       } catch {
@@ -2407,7 +2410,7 @@ app.get('/shared/:shareId', (req, res) => {
 });
 
 // Shared note request handler (shared by GET and POST)
-async function handleSharedNoteRequest(shareId, password, res, clientKey = 'unknown') {
+async function handleSharedNoteRequest(shareId, password, req, res, clientKey = 'unknown') {
   try {
     if (!/^[a-f0-9]{32}$/.test(shareId)) return res.status(404).json({ success: false, error: 'Shared file not found' });
     // Get shared file metadata
@@ -2439,6 +2442,9 @@ async function handleSharedNoteRequest(shareId, password, res, clientKey = 'unkn
           passwordRequired: true
         });
       }
+      req.session.sharedNotes = req.session.sharedNotes || {};
+      req.session.sharedNotes[shareId] = true;
+      delete loginAttempts[rateKey];
     }
 
     // Return file data (without sensitive info)
@@ -2461,14 +2467,14 @@ async function handleSharedNoteRequest(shareId, password, res, clientKey = 'unkn
 app.get('/api/shared/:shareId', async (req, res) => {
   const { shareId } = req.params;
   // Ignore any query-string password (legacy) — unprotected GET only
-  await handleSharedNoteRequest(shareId, null, res, req.ip || req.socket.remoteAddress);
+  await handleSharedNoteRequest(shareId, null, req, res, req.ip || req.socket.remoteAddress);
 });
 
 // API: Access password-protected shared file — POST with password in body
 app.post('/api/shared/:shareId', async (req, res) => {
   const { shareId } = req.params;
   const { password } = req.body;
-  await handleSharedNoteRequest(shareId, password, res, req.ip || req.socket.remoteAddress);
+  await handleSharedNoteRequest(shareId, password, req, res, req.ip || req.socket.remoteAddress);
 });
 
 // API: Search files
@@ -2478,7 +2484,10 @@ app.get('/api/search', async (req, res) => {
     const { q } = req.query;
 
     // Return empty results for empty/missing query instead of crashing
-    const query = (q || '').trim().toLowerCase();
+    if (typeof q !== 'string' || q.length > 500) {
+      return res.status(400).json({ success: false, error: 'Search query must be a string of at most 500 characters' });
+    }
+    const query = q.trim().toLowerCase();
     if (!query) {
       return res.json({ success: true, results: [] });
     }
@@ -2557,4 +2566,7 @@ Promise.all([ensureDataDir(), ensureSharedDir()]).then(async () => {
 
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+}).catch((error) => {
+  console.error('Fatal startup error:', error);
+  process.exit(1);
 });
