@@ -1124,9 +1124,15 @@ async function loadUserDatabase(userId) {
 }
 
 // Save user database (always use withUserLock to prevent race conditions)
+async function atomicWriteFile(filePath, content) {
+  const tmpPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  await fs.writeFile(tmpPath, content, { mode: 0o600 });
+  await fs.rename(tmpPath, filePath);
+}
+
 async function saveUserDatabase(userId, database) {
   const dbPath = getUserDatabasePath(userId);
-  await fs.writeFile(dbPath, JSON.stringify(database, null, 2));
+  await atomicWriteFile(dbPath, JSON.stringify(database, null, 2));
 }
 
 // Write note data atomically using per-user mutex
@@ -1216,7 +1222,7 @@ async function writeNoteData(userId, noteId, data) {
 
   // Write markdown file
   const notePath = getNoteFilePath(userId, noteId);
-  await fs.writeFile(notePath, markdown || '');
+  await atomicWriteFile(notePath, markdown || '');
 }
 
 // AUTH ROUTES
@@ -1273,9 +1279,11 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
-    // Set session
+    // Rotate the session identifier after authentication to prevent session fixation.
+    await new Promise((resolve, reject) => req.session.regenerate(err => err ? reject(err) : resolve()));
     req.session.userId = username;
     req.session.isAdmin = user.isAdmin || false;
+    loginAttempts.delete(ip);
 
     res.json({
       success: true,
@@ -1327,8 +1335,8 @@ app.post('/api/auth/change-password', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Current and new passwords are required' });
   }
 
-  if (newPassword.length < 6) {
-    return res.status(400).json({ success: false, error: 'New password must be at least 6 characters' });
+  if (typeof newPassword !== 'string' || newPassword.length < 12) {
+    return res.status(400).json({ success: false, error: 'New password must be at least 12 characters' });
   }
 
   try {
@@ -1400,8 +1408,8 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Username must be 3-30 characters and contain only letters, numbers, underscores, and hyphens' });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+    if (typeof password !== 'string' || password.length < 12) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 12 characters' });
     }
 
     const users = await loadUsers();
@@ -1454,8 +1462,8 @@ app.put('/api/admin/users/:username', requireAdmin, async (req, res) => {
 
     // Update password if provided
     if (password) {
-      if (password.length < 6) {
-        return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+      if (typeof password !== 'string' || password.length < 12) {
+        return res.status(400).json({ success: false, error: 'Password must be at least 12 characters' });
       }
       users[username].password = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
     }
@@ -2072,7 +2080,7 @@ app.post('/api/file/share/:noteId', async (req, res) => {
       data.shareId = crypto.randomBytes(16).toString('hex');
       data.updatedAt = new Date().toISOString();
       
-      await writeNoteData(userId, noteId, data);
+      await writeNoteDataSafe(userId, noteId, data);
 
       // Create metadata file in shared directory
       await ensureSharedDir();
