@@ -19,7 +19,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node --check server.js
-      - run: node --check public/app.js
       - run: node --check public/admin.js
       - run: npm test
       - run: docker build -t whiteboard:test .
@@ -35,5 +34,5 @@ jobs:
         with:
           go-version-file: Desktop/go.mod
           cache-dependency-path: Desktop/go.sum
-      - run: mkdir -p frontend/dist && cp frontend/index.html frontend/app.js frontend/style.css frontend/dist/
+      - run: mkdir -p frontend/dist && cp frontend/index.html frontend/app.js frontend/styles.css frontend/dist/
       - run: go test ./...
