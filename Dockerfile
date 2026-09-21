@@ -15,7 +15,7 @@ RUN apk add --no-cache tzdata wget && \
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install --production
+RUN npm ci --omit=dev
 
 # Copy application files (excluding node_modules, data, shared, etc. via .dockerignore)
 COPY . .
