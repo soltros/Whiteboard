@@ -10,6 +10,12 @@ const crypto = require('crypto');
 
 // Security constants
 const BCRYPT_SALT_ROUNDS = 12;
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const SESSION_SECRET = process.env.SESSION_SECRET;
+
+if (IS_PRODUCTION && (!SESSION_SECRET || SESSION_SECRET.length < 32)) {
+  throw new Error('SESSION_SECRET must be set to a random value of at least 32 characters in production');
+}
 
 // Per-user mutex to prevent race conditions on database operations
 const userMutexes = new Map();
@@ -39,24 +45,36 @@ const USERS_FILE = path.join(SYSTEM_DIR, 'users.json');
 const SETTINGS_FILE = path.join(SYSTEM_DIR, 'settings.json');
 const SHARED_DIR = path.join(__dirname, 'shared');
 
-// Session secret - in production, use environment variable
-const SESSION_SECRET = process.env.SESSION_SECRET || 'change-this-secret-in-production';
+// Never use a predictable production session secret. Development gets an ephemeral secret.
+const EFFECTIVE_SESSION_SECRET = SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 
 // Middleware
+app.disable('x-powered-by');
+if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
 app.use(helmet({
-  // Allow inline scripts needed by the app; tighten in production
-  contentSecurityPolicy: false
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      frameAncestors: ["'none'"]
+    }
+  }
 }));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 app.use(session({
-  secret: SESSION_SECRET,
+  secret: EFFECTIVE_SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: false, // Set to true in production with HTTPS
+    secure: IS_PRODUCTION ? 'auto' : false,
     httpOnly: true,
+    sameSite: 'lax',
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
 }));
@@ -85,9 +103,10 @@ const upload = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|webp|svg/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
+    const allowedExtensions = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
+    const allowedMimeTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+    const extname = allowedExtensions.has(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedMimeTypes.has(file.mimetype.toLowerCase());
 
     if (mimetype && extname) {
       return cb(null, true);
@@ -165,9 +184,12 @@ async function initializeUsers() {
   try {
     await fs.access(USERS_FILE);
   } catch {
-    // Create default admin account
-    // Password: admin123 (CHANGE THIS IN PRODUCTION!)
-    const adminPassword = await bcrypt.hash('admin123', BCRYPT_SALT_ROUNDS);
+    // Bootstrap credentials must be explicitly supplied; never create a known default password.
+    const bootstrapPassword = process.env.ADMIN_PASSWORD;
+    if (!bootstrapPassword || bootstrapPassword.length < 12) {
+      throw new Error('No users database exists. Set ADMIN_PASSWORD to a password of at least 12 characters for first startup.');
+    }
+    const adminPassword = await bcrypt.hash(bootstrapPassword, BCRYPT_SALT_ROUNDS);
     const users = {
       admin: {
         username: 'admin',
@@ -177,7 +199,7 @@ async function initializeUsers() {
       }
     };
     await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
-    console.log('Admin account created - Username: admin, Password: admin123');
+    console.log('Initial admin account created. Remove ADMIN_PASSWORD from the environment after first startup.');
   }
 }
 
