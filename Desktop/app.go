@@ -333,8 +333,8 @@ func (a *App) SelectFile() (string, error) {
 		Title: "Select Image",
 		Filters: []wailsruntime.FileFilter{
 			{
-				DisplayName: "Images (*.png;*.jpg;*.jpeg;*.gif;*.svg;*.webp)",
-				Pattern:     "*.png;*.jpg;*.jpeg;*.gif;*.svg;*.webp",
+				DisplayName: "Images (*.png;*.jpg;*.jpeg;*.gif;*.webp)",
+				Pattern:     "*.png;*.jpg;*.jpeg;*.gif;*.webp",
 			},
 		},
 	})
