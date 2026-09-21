@@ -156,7 +156,7 @@ app.use((req, res, next) => {
 });
 
 // Serve static files
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Migrate users.json/settings.json from old location to new _system/ location
 async function migrateSystemFiles() {
@@ -2122,7 +2122,7 @@ app.delete('/api/file/share/:noteId', async (req, res) => {
       // Remove shareId from note
       delete data.shareId;
       data.updatedAt = new Date().toISOString();
-      await writeNoteData(userId, noteId, data);
+      await writeNoteDataSafe(userId, noteId, data);
     }
 
     res.json({ success: true });
@@ -2355,9 +2355,12 @@ app.delete('/api/file/:noteId', async (req, res) => {
       }
     }
 
-    // Delete from database
-    delete database.notes[noteId];
-    await saveUserDatabase(userId, database);
+    // Delete from database while holding the same per-user lock used by writes.
+    await withUserLock(userId, async () => {
+      const currentDatabase = await loadUserDatabase(userId);
+      delete currentDatabase.notes[noteId];
+      await saveUserDatabase(userId, currentDatabase);
+    });
 
     // Delete markdown file
     const notePath = getNoteFilePath(userId, noteId);
@@ -2400,8 +2403,9 @@ app.get('/shared/:shareId', (req, res) => {
 });
 
 // Shared note request handler (shared by GET and POST)
-async function handleSharedNoteRequest(shareId, password, res) {
+async function handleSharedNoteRequest(shareId, password, res, clientKey = 'unknown') {
   try {
+    if (!/^[a-f0-9]{32}$/.test(shareId)) return res.status(404).json({ success: false, error: 'Shared file not found' });
     // Get shared file metadata
     const sharedPath = path.join(SHARED_DIR, path.basename(shareId) + '.json');
     const sharedContent = await fs.readFile(sharedPath, 'utf-8');
@@ -2420,8 +2424,11 @@ async function handleSharedNoteRequest(shareId, password, res) {
         });
       }
 
+      const rateKey = `share:${shareId}:${clientKey}`;
+      if (!checkRateLimit(rateKey)) return res.status(429).json({ success: false, error: 'Too many failed attempts. Please try again later.', passwordRequired: true });
       const valid = await bcrypt.compare(password, fileData.password);
       if (!valid) {
+        recordFailedAttempt(rateKey);
         return res.status(401).json({
           success: false,
           error: 'Invalid password',
@@ -2450,14 +2457,14 @@ async function handleSharedNoteRequest(shareId, password, res) {
 app.get('/api/shared/:shareId', async (req, res) => {
   const { shareId } = req.params;
   // Ignore any query-string password (legacy) — unprotected GET only
-  await handleSharedNoteRequest(shareId, null, res);
+  await handleSharedNoteRequest(shareId, null, res, req.ip || req.socket.remoteAddress);
 });
 
 // API: Access password-protected shared file — POST with password in body
 app.post('/api/shared/:shareId', async (req, res) => {
   const { shareId } = req.params;
   const { password } = req.body;
-  await handleSharedNoteRequest(shareId, password, res);
+  await handleSharedNoteRequest(shareId, password, res, req.ip || req.socket.remoteAddress);
 });
 
 // API: Search files
