@@ -57,7 +57,7 @@ func (a *App) getConfigPath() (string, error) {
 		return "", err
 	}
 	appDir := filepath.Join(configDir, "whiteboard-desktop")
-	if err := os.MkdirAll(appDir, 0755); err != nil {
+	if err := os.MkdirAll(appDir, 0700); err != nil {
 		return "", err
 	}
 	return filepath.Join(appDir, "config.json"), nil
@@ -104,7 +104,7 @@ func (a *App) saveConfig() {
 	if err != nil {
 		return
 	}
-	file, err := os.Create(path)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return
 	}
@@ -148,7 +148,12 @@ func (a *App) GetServerURL() string {
 
 // SetServerURL sets the server URL and saves it
 func (a *App) SetServerURL(serverURL string) {
-	a.serverURL = strings.TrimRight(serverURL, "/")
+	serverURL = strings.TrimRight(strings.TrimSpace(serverURL), "/")
+	u, err := url.Parse(serverURL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+		return
+	}
+	a.serverURL = serverURL
 	a.saveConfig()
 }
 
@@ -167,7 +172,18 @@ func (a *App) doRequest(method, path string, body io.Reader, headers map[string]
 		return "", fmt.Errorf("server URL is not configured")
 	}
 
-	reqURL := fmt.Sprintf("%s%s", a.serverURL, path)
+	if !strings.HasPrefix(path, "/") {
+		return "", fmt.Errorf("request path must be relative to the configured Whiteboard server")
+	}
+	baseURL, err := url.Parse(a.serverURL)
+	if err != nil || baseURL.Host == "" {
+		return "", fmt.Errorf("invalid server URL")
+	}
+	relativeURL, err := url.Parse(path)
+	if err != nil || relativeURL.IsAbs() || relativeURL.Host != "" {
+		return "", fmt.Errorf("invalid request path")
+	}
+	reqURL := baseURL.ResolveReference(relativeURL).String()
 	req, err := http.NewRequest(method, reqURL, body)
 	if err != nil {
 		return "", err
