@@ -237,6 +237,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
   <script>
     const shareId = window.location.pathname.split('/').pop();
 
@@ -284,7 +285,7 @@
         // Render markdown content as HTML
         const contentDiv = document.getElementById('note-content');
         if (noteData.markdown) {
-          contentDiv.innerHTML = marked.parse(noteData.markdown);
+          contentDiv.innerHTML = DOMPurify.sanitize(marked.parse(noteData.markdown), { USE_PROFILES: { html: true } });
         } else {
           contentDiv.textContent = 'This note is empty.';
         }
