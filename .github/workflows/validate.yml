@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   node:
@@ -17,20 +17,6 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm install --package-lock-only
-      - run: npm audit fix --package-lock-only
-      - name: Commit resolved lockfile
-        if: github.head_ref == 'audit/security-hardening'
-        run: |
-          if ! git diff --quiet -- package-lock.json; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add package-lock.json
-            git commit -m 'build: commit audited dependency lockfile'
-            git fetch origin audit/security-hardening
-            git rebase origin/audit/security-hardening
-            git push origin HEAD:audit/security-hardening
-          fi
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
       - run: node --check server.js
