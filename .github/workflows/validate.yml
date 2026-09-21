@@ -18,8 +18,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm install --package-lock-only
-      - name: Temporary lockfile capture
-        run: base64 -w0 package-lock.json && echo
+      - run: npm audit fix --package-lock-only
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
       - run: node --check server.js
