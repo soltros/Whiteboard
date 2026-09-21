@@ -370,6 +370,7 @@ function populateGroupsSubmenu() {
       addToExistingGroup(item.dataset.group);
     }
   };
+}
 
 // Populate the remove from groups submenu with note's current groups
 function populateRemoveGroupsSubmenu() {
@@ -411,6 +412,7 @@ function populateRemoveGroupsSubmenu() {
       removeFromGroup(item.dataset.group);
     }
   };
+}
 
 // Hide context menu
 function hideContextMenu() {
@@ -1870,8 +1872,8 @@ async function changePassword() {
     return;
   }
 
-  if (newPassword.length < 6) {
-    errorDiv.textContent = 'New password must be at least 6 characters';
+  if (newPassword.length < 12) {
+    errorDiv.textContent = 'New password must be at least 12 characters';
     return;
   }
 
